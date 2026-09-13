@@ -14,16 +14,16 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div><p class="eyebrow" id="current-month">Setembro de 2026</p><h1>Pissa Finance</h1></div>
+        <div><p class="eyebrow" id="current-month"></p><h1>Pissa Finance</h1></div>
         <button class="icon-button" type="button" data-notification-message="Configurações em breve" aria-label="Abrir configurações">⚙</button>
       </header>
 
       <section class="screen active" id="home" aria-labelledby="home-title">
         <h2 class="sr-only" id="home-title">Início</h2>
         <article class="balance-card">
-          <div class="card-label">Patrimônio / Reserva <span class="trend">↗ +R$ 82,00</span></div>
-          <strong id="net-worth">R$ 327,50</strong>
-          <p>Variação no mês</p>
+          <div class="card-label">Saldo disponível <span class="trend" id="balance-trend" hidden></span></div>
+          <strong id="net-worth"></strong>
+          <p id="balance-caption"></p>
         </article>
         <section class="summary-grid" id="home-summary" aria-label="Resumo financeiro"></section>
         <section class="content-section"><div class="section-heading"><div><p class="eyebrow">Objetivos</p><h2>Suas metas</h2></div><button class="text-button" data-navigate="goals">Ver todas</button></div><div class="goal-list compact" id="home-goals"></div></section>

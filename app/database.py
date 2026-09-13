@@ -26,6 +26,16 @@ def init_db():
         created_at TEXT NOT NULL
     )
 """)
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS goals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        target_amount REAL NOT NULL,
+        current_amount REAL NOT NULL DEFAULT 0,
+        deadline TEXT,
+        created_at TEXT NOT NULL
+    )                   
+    """)
 
     connection.commit()
     connection.close()

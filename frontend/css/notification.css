@@ -33,6 +33,11 @@
 .transaction-action { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); color: var(--muted); font-size: 15px; }
 .transaction-action:active { background: var(--border); color: var(--text); }
 .transaction-action.danger { color: var(--red); }
+.goal-header-actions { display: flex; align-items: center; gap: 7px; }
+.goal-actions { display: flex; gap: 4px; }
+.goal-action { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); color: var(--muted); font-size: 15px; }
+.goal-action:active { background: var(--border); color: var(--text); }
+.goal-action.danger { color: var(--red); }
 
 /* Garante que o backdrop não permaneça sobre a interface após o fechamento. */
 .modal-backdrop[hidden] { display: none !important; }
