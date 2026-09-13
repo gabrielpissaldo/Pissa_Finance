@@ -1,10 +1,13 @@
 # Pissa Finance
 
-Sistema pessoal de controle financeiro, mobile-first, pensado para rodar localmente em Docker e ser acessado pelo celular via rede privada/Tailscale. Transactions já possuem integração entre interface, FastAPI e SQLite; metas e dashboard ainda usam dados mockados.
+Sistema pessoal de finanças, mobile-first, destinado a rodar localmente em Docker no Samsunguinho e ser acessado pelo navegador — especialmente por iPhone em rede privada/Tailscale.
+
+Transactions, goals e Dashboard usam dados reais do FastAPI/SQLite. O Dashboard é uma camada de leitura que agrega transactions; ele não possui tabela própria.
 
 ## Stack
 
-- Python 3.12, FastAPI e Uvicorn
+- Python 3.12
+- FastAPI, Uvicorn e Pydantic
 - SQLite
 - HTML5, CSS3 e JavaScript vanilla
 - Docker e Docker Compose
@@ -14,36 +17,16 @@ Sistema pessoal de controle financeiro, mobile-first, pensado para rodar localme
 ```text
 iPhone / navegador
         ↓
-Frontend: HTML + CSS + JavaScript
+Frontend estático (HTML + CSS + JS)
         ↓
 FastAPI / Uvicorn
         ↓
 SQLite
 ```
 
-Frontend e API são servidos pela mesma aplicação FastAPI, permitindo chamadas relativas como `/api/transactions/`.
+O FastAPI serve tanto API quanto frontend via `StaticFiles`, portanto a UI usa rotas relativas como `/api/transactions/`.
 
-## Estrutura do projeto
-
-```text
-PissaFinance/
-├── app/
-│   ├── database.py                 # SQLite e criação da tabela
-│   ├── main.py                     # FastAPI, lifespan, health e StaticFiles
-│   └── routes/transactions.py      # Models e CRUD de transactions
-├── data/pissa_finance.db           # Banco persistido (ignorado pelo Git)
-├── frontend/
-│   ├── index.html                  # SPA, telas, navegação, modal e avisos
-│   ├── css/{style,responsive,notification}.css
-│   └── js/{app,mock-data}.js
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-├── PROJECT_STATE.md                # Inventário técnico detalhado
-└── README.md
-```
-
-## Como executar
+## Executar
 
 ```bash
 docker compose up -d --build
@@ -52,135 +35,127 @@ docker compose up -d --build
 | Serviço | Endereço |
 |---|---|
 | Interface | `http://HOST:8001` |
-| Documentação OpenAPI | `http://HOST:8001/docs` |
+| Docs OpenAPI | `http://HOST:8001/docs` |
 | Health check | `http://HOST:8001/health` |
 
-Exemplo local: `http://localhost:8001`. O contêiner usa a porta `8000`; o Compose publica `8001:8000`.
+O host usa a porta 8001 e o Uvicorn roda na porta 8000 do container. O SQLite persiste em `./data/pissa_finance.db` pelo bind mount `./data:/app/data`.
 
-## Persistência
+## Estrutura
 
 ```text
-Container: /app/data/pissa_finance.db
-Host:      /home/gabriel/PissaFinance/data/pissa_finance.db
-Volume:    ./data:/app/data
+app/
+├── main.py                    # FastAPI, routers, lifespan e StaticFiles
+├── database.py                # SQLite e schema inicial
+└── routes/
+    ├── transactions.py        # CRUD de transactions
+    ├── goals.py               # CRUD de goals
+    └── dashboard.py           # Agregações de leitura do Dashboard
+frontend/
+├── index.html
+├── css/
+└── js/
+    ├── app.js                 # Integrações HTTP e renderização
+    └── mock-data.js           # Arquivo legado, sem uso ativo no Dashboard
+data/pissa_finance.db
+Dockerfile
+docker-compose.yml
 ```
 
-O bind mount preserva o banco fora do contêiner. `.gitignore` ignora `data/*.db`, `.venv/`, bytecode Python e `.env`.
+## API e modelos
 
-## Estado atual
+### Transactions
 
-- [x] Backend FastAPI, Uvicorn e health check.
-- [x] SQLite persistente e tabela `transactions` inicializada no lifespan.
-- [x] Docker/Docker Compose.
-- [x] Frontend vanilla servido pelo FastAPI via `StaticFiles`.
-- [x] CRUD de transactions no backend: GET, POST, PUT e DELETE.
-- [x] `id` gerado por SQLite com `AUTOINCREMENT`.
-- [x] `created_at` criado pelo backend usando `America/Sao_Paulo`.
-- [x] GET e POST de transactions integrados à interface.
-- [x] Transactions reais renderizadas na Home e em Movimentações.
-- [x] Saldo, entradas e saídas calculados pela lista carregada.
-- [x] Navegação, modais, cancelamento e notificações locais.
-- [x] Inclusão local/em memória de metas.
+Campos: `id`, `description`, `amount`, `type`, `category`, `transaction_date`, `created_at`.
 
-## Transactions
-
-### Campos
-
-| Campo | Descrição |
+| Método | Rota |
 |---|---|
-| `id` | Gerado automaticamente pelo SQLite. |
-| `description` | Descrição da movimentação. |
-| `amount` | Valor numérico. |
-| `type` | A UI oferece `income`, `expense` e `investment`. |
-| `category` | Categoria opcional. |
-| `transaction_date` | Data financeira escolhida pelo usuário. |
-| `created_at` | Timestamp ISO gerado pelo backend em America/Sao_Paulo. |
+| POST | `/api/transactions/` |
+| GET | `/api/transactions/` |
+| PUT | `/api/transactions/{id}` |
+| DELETE | `/api/transactions/{id}` |
 
-### Rotas
+`id` é SQLite AUTOINCREMENT. `transaction_date` é a data financeira escolhida; `created_at` é criado pelo backend no fuso `America/Sao_Paulo`. Tipos usados pela UI: `income`, `expense` e `investment`.
 
-| Método | Rota | Função | Resultado |
-|---|---|---|---|
-| GET | `/api/transactions/` | `list_transactions()` | Lista por `id DESC`. |
-| POST | `/api/transactions/` | `create_transaction()` | Persiste e retorna `id` e mensagem. |
-| PUT | `/api/transactions/{transaction_id}` | `update_transaction()` | Atualiza descrição, valor, tipo e categoria. |
-| DELETE | `/api/transactions/{transaction_id}` | `delete_transaction()` | Remove a transaction indicada. |
+### Goals
 
-A barra final faz parte do contrato: o frontend usa `/api/transactions/`.
+Campos: `id`, `name`, `target_amount`, `current_amount`, `deadline`, `created_at`.
 
-### Fluxo integrado
+| Método | Rota |
+|---|---|
+| POST | `/api/goals/` |
+| GET | `/api/goals/` |
+| PUT | `/api/goals/{id}` |
+| DELETE | `/api/goals/{id}` |
+
+### Dashboard
+
+`GET /api/dashboard/` deriva dados exclusivamente da tabela `transactions`:
 
 ```text
-Formulário frontend
-        ↓
-POST /api/transactions/
-        ↓
-FastAPI
-        ↓
-SQLite
-        ↓
-GET /api/transactions/
-        ↓
-Home e tela Movimentações
+transactions → dashboard.py → cálculos agregados → frontend
 ```
 
-O formulário envia `description`, `amount`, `type`, `category` e `transaction_date`. Após POST bem-sucedido, a interface recarrega a lista pelo GET. A Home exibe as três primeiras transactions; Movimentações usa a lista completa e filtros locais.
+Contrato:
 
-## Dados reais e mocks
-
-| Área | Fonte atual | Detalhe |
-|---|---|---|
-| Transactions | Backend/SQLite | `loadTransactions()` faz GET; o formulário faz POST. |
-| Goals | Mock | `loadGoals()` retorna `state.data.goals`; novas metas se perdem ao recarregar. |
-| Cards do dashboard | Mock | `state.data.dashboard`. |
-| Gastos por categoria | Mock | `state.data.categories`. |
-| Evolução mensal | Mock | `state.data.monthly`. |
-| `window.MockData.transactions` | Mock residual | Está definido, mas não alimenta a renderização atual. |
-
-O estado começa assim:
-
-```js
-const state = { data: window.MockData, filter: 'all', modal: null };
+```json
+{
+  "income": 0,
+  "expenses": 0,
+  "invested": 0,
+  "balance": 0,
+  "categories": [{"name": "Alimentação", "value": 0}],
+  "monthly": [{"month": "Abr", "value": 0}]
+}
 ```
 
-Portanto, dashboard, goals, categories e monthly ainda dependem de `window.MockData`; transactions usam a API.
+`balance = income - expenses - invested`. `categories` agrupa somente `expense` por categoria; categorias nulas/vazias viram `Sem categoria`. `monthly` retorna os últimos seis meses, incluindo o atual, com saldo líquido mensal baseado em `transaction_date`.
 
-## Limitações atuais
+## Estado de implementação
 
-- Não existe UI de edição ou remoção, embora PUT e DELETE existam no backend.
-- PUT não recebe nem atualiza `transaction_date`.
-- Não há estado visual dedicado de loading para GET/POST.
-- Falhas de GET lançam erro sem `try/catch` de apresentação ao usuário.
-- POST mostra erro para resposta HTTP não bem-sucedida, mas não trata rejeição de rede do `fetch`.
-- O backend não valida um conjunto fechado de valores para `type`.
-- O campo `note` aparece no formulário, mas não é enviado, persistido ou modelado.
-- `transaction_date` é exibida sem formatação.
-- Goals, dashboard, categorias e evolução mensal não têm endpoints nem persistência.
-
-## TODO / Roadmap
-
-- [x] Backend FastAPI.
-- [x] SQLite persistente.
-- [x] Docker.
+- [x] FastAPI, SQLite persistente e Docker Compose.
 - [x] Frontend servido pelo FastAPI.
-- [x] CRUD backend de transactions.
-- [x] POST e GET de transactions integrados à UI.
-- [x] Renderização de transactions reais e cálculo de saldo.
+- [x] CRUD e integração UI/API de transactions.
+- [x] CRUD e integração UI/API de goals.
+- [x] Home com `income`, `expenses`, `invested` e `balance` reais.
+- [x] Dashboard com cards, donut/legenda de categorias e evolução mensal reais.
+- [x] Estados vazios do Dashboard: categorias vazias e seis meses com zero.
 
-- [ ] Integrar DELETE de transaction à UI.
-- [ ] Integrar PUT de transaction à UI.
-- [ ] Decidir se `transaction_date` deve ser editável no PUT.
-- [ ] Adicionar tratamento visual de loading e erro.
-- [ ] Validar tipos de transaction no backend.
-- [ ] Definir o contrato do campo `note`.
-- [ ] Implementar backend e integração para goals.
-- [ ] Implementar dashboard com dados reais.
-- [ ] Calcular gastos por categoria e evolução mensal reais.
-- [ ] Remover ou reaproveitar mocks restantes.
+## Roadmap
 
-## Observações técnicas
+### Fase 2 — Investimentos reais
 
-- `app/main.py` registra API e `/health` antes de montar `StaticFiles` em `/`; frontend, API e `/docs` coexistem.
-- A imagem é `python:3.12-slim` e inicia com `uvicorn app.main:app --host 0.0.0.0 --port 8000`.
-- Não há runtime Node.js, framework frontend nem dependência frontend externa.
-- Para acesso por outro dispositivo, substitua `HOST` pelo IP/nome do servidor e mantenha a porta `8001`.
-- Para detalhes de arquivos, contratos e fluxos, consulte [PROJECT_STATE.md](PROJECT_STATE.md).
+- [ ] Definir modelo e tabela `investments`.
+- [ ] Relacionar aportes com posições.
+- [ ] Separar valor aportado de valor atual.
+- [ ] Criar service layer de investimentos.
+
+### Fase 3 — Dados externos
+
+- [ ] Fontes externas de mercado, cripto e renda fixa.
+- [ ] CDI, Selic e eventualmente ações/ETFs.
+- [ ] Cache e tratamento de falhas de APIs externas.
+
+### Fase 4 — Rentabilidade
+
+- [ ] Valor atual, total aportado, lucro/prejuízo e rentabilidade.
+- [ ] Patrimônio financeiro real e separação de saldo disponível.
+
+### Fase 5 — Projeções
+
+- [ ] Aportes recorrentes e projeções para 6 meses, 1 ano e múltiplos anos.
+- [ ] Cenários conservador/base/otimista.
+
+Projeções devem usar matemática e dados reais, nunca números inventados.
+
+### Fase 6 — UX e qualidade
+
+- [ ] Loading, erros globais e validações melhores.
+- [ ] Datas em pt-BR, acessibilidade e revisão mobile.
+- [ ] Limpar o arquivo/mock residual após confirmar que não há consumidores.
+
+### Fase 7 — Futuro
+
+- [ ] Autenticação, múltiplos usuários, exportação, backups e relatórios.
+- [ ] Avaliar integração com AI-SERVER somente se fizer sentido.
+
+Para detalhes técnicos e decisões de continuidade, consulte [PROJECT_STATE.md](PROJECT_STATE.md).

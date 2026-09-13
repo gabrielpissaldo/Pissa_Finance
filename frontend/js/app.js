@@ -12,6 +12,7 @@
   };
   const money = value => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const $ = selector => document.querySelector(selector);
+  const categoryColors = ['#fe6d63', '#edb65b', '#7f72ed', '#5aa8e8', '#77dda1'];
   let notificationTimer;
 
   function showNotification(message, type = 'success') {
@@ -109,11 +110,8 @@
   const transactions = await loadTransactions();
 
   $('#net-worth').textContent = money(
-    dashboard.available_balance
+    dashboard.balance
   );
-  $('#balance-trend').textContent = '';
-  $('#balance-trend').hidden = true;
-  $('#balance-caption').textContent = '';
 
   $('#home-summary').innerHTML = [
     ['Total recebido', dashboard.income, 'positive'],
@@ -156,13 +154,56 @@
   }
   
   async function renderGoals() { $('#goal-list').innerHTML = (await loadGoals()).map(goal => goalMarkup(goal, true)).join(''); }
+
+  function renderExpenseCategories(categories) {
+    const donut = $('#expense-donut');
+    const legend = $('#expense-legend');
+    const total = categories.reduce((sum, category) => sum + category.value, 0);
+
+    if (!categories.length || total <= 0) {
+      donut.style.background = 'var(--border)';
+      legend.innerHTML = '<span class="page-intro">Nenhum gasto registrado.</span>';
+      return;
+    }
+
+    let currentPercentage = 0;
+    const segments = categories.map((category, index) => {
+      const nextPercentage = currentPercentage + (category.value / total) * 100;
+      const color = categoryColors[index % categoryColors.length];
+      const segment = `${color} ${currentPercentage}% ${nextPercentage}%`;
+      currentPercentage = nextPercentage;
+      return segment;
+    });
+
+    donut.style.background = `conic-gradient(${segments.join(', ')})`;
+    legend.innerHTML = categories.map((category, index) => {
+      const color = categoryColors[index % categoryColors.length];
+      return `<div class="legend-item"><span><i style="background:${color}"></i>${category.name}</span><strong>${money(category.value)}</strong></div>`;
+    }).join('');
+  }
+
+  function renderMonthlyEvolution(monthly) {
+    const chart = $('#line-chart');
+    const months = $('#chart-months');
+    const values = monthly.map(item => Number(item.value) || 0);
+    const maxValue = Math.max(0, ...values.map(value => Math.abs(value)));
+
+    chart.innerHTML = monthly.map((item, index) => {
+      const value = values[index];
+      const height = maxValue ? Math.max(8, (Math.abs(value) / maxValue) * 100) : 2;
+      const typeClass = value < 0 ? ' negative' : '';
+      return `<i class="line-bar${typeClass}" style="height:${height}%" aria-label="${item.month}: ${money(value)}"></i>`;
+    }).join('');
+    months.innerHTML = monthly.map(item => `<span>${item.month}</span>`).join('');
+  }
+
   async function renderDashboard() {
     const d = await loadDashboard();
     $('#dashboard-stats').innerHTML = [
     ['Total recebido', d.income, 'positive'],
     ['Total gasto', d.expenses, 'negative'],
     ['Total investido', d.invested, 'positive accent'],
-    ['Saldo disponível', d.available_balance, 'positive']
+    ['Saldo disponível', d.balance, 'positive']
   ].map(([label, value, classes]) => `
     <article class="stat-card ${classes.includes('accent') ? 'accent' : ''}">
       <span>${label}</span>
@@ -171,7 +212,10 @@
       </strong>
     </article>
   `).join('');
-    }
+    $('#expense-total').textContent = money(d.expenses);
+    renderExpenseCategories(d.categories || []);
+    renderMonthlyEvolution(d.monthly || []);
+  }
   function navigate(screen) {
     document.querySelectorAll('.screen').forEach(item => item.classList.toggle('active', item.id === screen));
     document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.screen === screen));
