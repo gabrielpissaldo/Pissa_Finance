@@ -1,0 +1,34 @@
+.notification {
+  position: fixed;
+  z-index: 20;
+  right: 16px;
+  bottom: calc(82px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-2);
+  box-shadow: 0 10px 24px #0006;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.notification[hidden] { display: none; }
+.notification.success { border-color: #3d7655; }
+.notification.error { border-color: #84403b; }
+.notification-icon::before { font-weight: 700; }
+.notification.success .notification-icon { color: var(--green); }
+.notification.success .notification-icon::before { content: "✓"; }
+.notification.error .notification-icon { color: var(--red); }
+.notification.error .notification-icon::before { content: "!"; }
+.notification-close { width: 24px; height: 24px; margin: -4px -6px -4px 2px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 19px; line-height: 1; }
+.notification-close:active { background: var(--border); }
+.form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+.form-actions .form-submit { margin: 0; }
+.secondary-button { border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); font-weight: 700; font-size: 14px; }
+
+/* Garante que o backdrop não permaneça sobre a interface após o fechamento. */
+.modal-backdrop[hidden] { display: none !important; }

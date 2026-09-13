@@ -1,0 +1,12 @@
+services:
+  pissa-finance:
+    build: .
+    container_name: pissa-finance
+
+    restart: unless-stopped
+
+    ports:
+      - "8001:8000"
+
+    volumes:
+      - ./data:/app/data

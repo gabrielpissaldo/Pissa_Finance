@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#101416">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Pissa Finance</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/notification.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div><p class="eyebrow" id="current-month">Setembro de 2026</p><h1>Pissa Finance</h1></div>
+        <button class="icon-button" type="button" data-notification-message="Configurações em breve" aria-label="Abrir configurações">⚙</button>
+      </header>
+
+      <section class="screen active" id="home" aria-labelledby="home-title">
+        <h2 class="sr-only" id="home-title">Início</h2>
+        <article class="balance-card">
+          <div class="card-label">Patrimônio / Reserva <span class="trend">↗ +R$ 82,00</span></div>
+          <strong id="net-worth">R$ 327,50</strong>
+          <p>Variação no mês</p>
+        </article>
+        <section class="summary-grid" id="home-summary" aria-label="Resumo financeiro"></section>
+        <section class="content-section"><div class="section-heading"><div><p class="eyebrow">Objetivos</p><h2>Suas metas</h2></div><button class="text-button" data-navigate="goals">Ver todas</button></div><div class="goal-list compact" id="home-goals"></div></section>
+        <section class="content-section"><div class="section-heading"><div><p class="eyebrow">Acompanhamento</p><h2>Últimas movimentações</h2></div><button class="text-button" data-navigate="transactions">Ver todas</button></div><div class="transaction-list" id="recent-transactions"></div></section>
+      </section>
+
+      <section class="screen" id="transactions" aria-labelledby="transactions-title">
+        <div class="page-heading"><div><p class="eyebrow">Setembro</p><h2 id="transactions-title">Movimentações</h2></div><button class="primary-button add-button" data-open-modal="transaction">+ Nova</button></div>
+        <article class="month-summary"><span>Saldo do mês</span><strong id="month-balance">R$ 0,00</strong><div><span id="month-income">+ R$ 0,00</span><span id="month-expense">− R$ 0,00</span></div></article>
+        <div class="filter-bar" role="group" aria-label="Filtrar movimentações"><button class="filter active" data-filter="all">Todas</button><button class="filter" data-filter="income">Entradas</button><button class="filter" data-filter="expense">Saídas</button><button class="filter" data-filter="investment">Investimentos</button></div>
+        <div class="transaction-list full-list" id="transaction-list"></div>
+      </section>
+
+      <section class="screen" id="goals" aria-labelledby="goals-title">
+        <div class="page-heading"><div><p class="eyebrow">Planejamento</p><h2 id="goals-title">Metas financeiras</h2></div><button class="primary-button add-button" data-open-modal="goal">+ Nova</button></div>
+        <p class="page-intro">Acompanhe cada objetivo e celebre os pequenos avanços.</p>
+        <div class="goal-list" id="goal-list"></div>
+      </section>
+
+      <section class="screen" id="dashboard" aria-labelledby="dashboard-title">
+        <div class="page-heading"><div><p class="eyebrow">Visão geral</p><h2 id="dashboard-title">Dashboard</h2></div></div>
+        <section class="dashboard-stats" id="dashboard-stats"></section>
+        <section class="chart-card"><div class="section-heading"><div><p class="eyebrow">Setembro</p><h3>Gastos por categoria</h3></div><strong id="expense-total">R$ 0,00</strong></div><div class="donut-layout"><div class="donut" id="expense-donut"><span>Gastos</span></div><div class="chart-legend" id="expense-legend"></div></div></section>
+        <section class="chart-card"><div class="section-heading"><div><div><p class="eyebrow">Últimos 6 meses</p><h3>Evolução mensal</h3></div><span class="positive">↗ Crescendo</span></div><div class="line-chart" id="line-chart" aria-label="Gráfico de evolução mensal"></div><div class="chart-months" id="chart-months"></div></section>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Navegação principal">
+      <button class="nav-item active" data-screen="home"><span>⌂</span>Home</button><button class="nav-item" data-screen="transactions"><span>↕</span>Movimentações</button><button class="nav-item" data-screen="goals"><span>◎</span>Metas</button><button class="nav-item" data-screen="dashboard"><span>▥</span>Dashboard</button>
+    </nav>
+
+    <div class="notification" id="notification" role="status" aria-live="polite" hidden>
+      <span class="notification-icon" aria-hidden="true"></span>
+      <span id="notification-message"></span>
+      <button class="notification-close" type="button" data-close-notification aria-label="Fechar aviso">×</button>
+    </div>
+
+    <div class="modal-backdrop" id="modal-backdrop" hidden>
+      <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="sheet-handle"></div><div class="sheet-title"><h2 id="modal-title">Nova movimentação</h2><button class="icon-button" type="button" data-close-modal aria-label="Fechar">×</button></div>
+        <form id="entry-form"></form>
+      </section>
+    </div>
+
+    <script src="js/mock-data.js"></script><script src="js/app.js"></script>
+  </body>
+</html>
