@@ -1,5 +1,12 @@
 (() => {
-  const state = { data: window.MockData, filter: 'all', modal: null };
+  const state = {
+    data: window.MockData,
+    filter: 'all',
+    modal: null,
+    transactionMode: 'create',
+    editingTransactionId: null,
+    transactions: []
+  };
   const money = value => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const $ = selector => document.querySelector(selector);
   let notificationTimer;
@@ -34,14 +41,20 @@
 
     if (!response.ok) throw new Error('Erro ao carregar transações');
 
-    return await response.json();
+    state.transactions = await response.json();
+    return state.transactions;
    }
   async function loadGoals() { return state.data.goals; }
 
   const transactionIcon = type => ({ income: '↓', expense: '↑', investment: '◇' }[type]);
   const transactionLabel = type => ({ income: 'Entrada', expense: 'Saída', investment: 'Investimento' }[type]);
-  function transactionMarkup(item) {
+  function transactionMarkup(item, showActions = false) {
     const sign = item.type === 'income' ? '+' : '-';
+    const actions = showActions ? `
+      <div class="transaction-actions" aria-label="Ações de ${item.description}">
+        <button class="transaction-action" type="button" data-edit-transaction="${item.id}" aria-label="Editar ${item.description}" title="Editar">✎</button>
+        <button class="transaction-action danger" type="button" data-delete-transaction="${item.id}" aria-label="Excluir ${item.description}" title="Excluir">×</button>
+      </div>` : '';
     return `
     <article class="transaction ${item.type}">
       <div class="transaction-icon">${transactionIcon(item.type)}</div>
@@ -52,7 +65,7 @@
       <div class="transaction-value">
         <strong>${sign} ${money(item.amount)}</strong>
         <span>${item.transaction_date}</span>
-      </div>
+      </div>${actions}
     </article>`;
   }
   
@@ -86,7 +99,7 @@
     
     const visible = state.filter === 'all' ? items : items.filter(x => x.type === state.filter);
     
-    $('#transaction-list').innerHTML = visible.length ? visible.map(transactionMarkup).join('') : '<p class="page-intro">Nenhuma movimentação encontrada.</p>';
+    $('#transaction-list').innerHTML = visible.length ? visible.map(item => transactionMarkup(item, true)).join('') : '<p class="page-intro">Nenhuma movimentação encontrada.</p>';
     void dashboard;
   }
   
@@ -109,10 +122,93 @@
     if (type === 'goal') return `<div class="form-grid"><label class="field">Nome da meta<input name="name" required placeholder="Ex.: Viagem"></label><div class="form-row"><label class="field">Valor alvo<input name="target" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Valor inicial<input name="initial" inputmode="decimal" placeholder="R$ 0,00"></label></div><label class="field">Prazo (opcional)<input name="deadline" type="month"></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar meta</button></div></div>`;
     return `<div class="form-grid"><label class="field">Tipo<select name="type"><option value="income">Entrada</option><option value="expense">Saída</option><option value="investment">Investimento</option></select></label><label class="field">Descrição<input name="description" required placeholder="Ex.: Mercado"></label><div class="form-row"><label class="field">Valor<input name="amount" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Categoria<input name="category" required placeholder="Ex.: Alimentação"></label></div><label class="field">Data<input name="date" type="date" value="2026-09-10"></label><label class="field">Observação<textarea name="note" placeholder="Opcional"></textarea></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar</button></div></div>`;
   }
-  function openModal(type) { state.modal = type; $('#modal-title').textContent = type === 'goal' ? 'Nova meta' : 'Nova movimentação'; $('#entry-form').innerHTML = formMarkup(type); $('#modal-backdrop').hidden = false; setTimeout(() => $('#entry-form input')?.focus(), 50); }
+  function openModal(type, transactionMode = 'create') {
+    state.modal = type;
+    if (type === 'transaction') {
+      state.transactionMode = transactionMode;
+      if (transactionMode === 'create') state.editingTransactionId = null;
+    }
+    $('#modal-title').textContent = type === 'goal' ? 'Nova meta' : transactionMode === 'edit' ? 'Editar movimentação' : 'Nova movimentação';
+    $('#entry-form').innerHTML = formMarkup(type);
+    $('#modal-backdrop').hidden = false;
+    setTimeout(() => $('#entry-form input')?.focus(), 50);
+  }
+
+  function getTransactionById(id) {
+    return state.transactions.find(transaction => transaction.id === Number(id));
+  }
+
+  function fillTransactionForm(transaction) {
+    const form = $('#entry-form');
+    form.elements.type.value = transaction.type;
+    form.elements.description.value = transaction.description;
+    form.elements.amount.value = transaction.amount;
+    form.elements.category.value = transaction.category || '';
+    form.elements.date.value = transaction.transaction_date || '';
+  }
+
+  function openEditTransaction(id) {
+    const transaction = getTransactionById(id);
+    if (!transaction) {
+      showNotification('Movimentação não encontrada', 'error');
+      return;
+    }
+
+    state.editingTransactionId = transaction.id;
+    openModal('transaction', 'edit');
+    fillTransactionForm(transaction);
+    $('#entry-form [type="submit"]').textContent = 'Salvar alterações';
+  }
+
+  async function prepareUpdateTransaction(id, payload) {
+    const response = await fetch(`/api/transactions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      showNotification('Erro ao atualizar movimentação', 'error');
+      return false;
+    }
+    return true;
+  }
+
+  function confirmDeleteTransaction(id) {
+  const transaction = getTransactionById(id);
+
+  if (!transaction) {
+    showNotification('Movimentação não encontrada', 'error');
+    return;
+  }
+
+  if (!window.confirm(
+    'Deseja realmente excluir esta movimentação?'
+  )) return;
+
+  prepareDeleteTransaction(transaction.id);
+}
+
+  async function prepareDeleteTransaction(id) {
+    const response = await fetch(`/api/transactions/${id}`, {
+       method: 'DELETE' 
+      });
+    
+    if (!response.ok){
+      showNotification('Erro ao excluir movimentação', 'error');
+      return;
+    }
+
+    await renderHome();
+    await renderTransactions();
+
+    showNotification('Movimentação excluída com sucesso', 'success');
+  }
+
   function closeModal() {
     $('#modal-backdrop').hidden = true;
     state.modal = null;
+    state.transactionMode = 'create';
+    state.editingTransactionId = null;
   }
   document.querySelector('[data-close-modal]').addEventListener('click', closeModal);
   function parseAmount(value) { return Number(String(value).replace(/[^0-9,.-]/g, '').replace('.', '').replace(',', '.')) || 0; }
@@ -138,6 +234,22 @@
         category: form.get('category'),
         transaction_date: form.get('date')
       };
+
+      if (state.transactionMode === 'edit') {
+        const success = await prepareUpdateTransaction(
+          state.editingTransactionId,
+          payload
+        );
+
+        if (!success) return;
+
+        await renderHome();
+        await renderTransactions();
+
+        closeModal();
+        showNotification('Movimentação atualizada com sucesso', 'success');
+        return;
+      }
 
       const response = await fetch('/api/transactions/', {
         method: 'POST',
@@ -168,6 +280,8 @@
     const nav = event.target.closest('[data-screen]'); if (nav) navigate(nav.dataset.screen);
     const link = event.target.closest('[data-navigate]'); if (link) navigate(link.dataset.navigate);
     const modal = event.target.closest('[data-open-modal]'); if (modal) openModal(modal.dataset.openModal);
+    const editTransaction = event.target.closest('[data-edit-transaction]'); if (editTransaction) openEditTransaction(editTransaction.dataset.editTransaction);
+    const deleteTransaction = event.target.closest('[data-delete-transaction]'); if (deleteTransaction) confirmDeleteTransaction(deleteTransaction.dataset.deleteTransaction);
     if (event.target.matches('[data-close-modal], .modal-backdrop')) closeModal();
     if (event.target.closest('[data-close-notification]')) hideNotification();
     const notification = event.target.closest('[data-notification-message]'); if (notification) showNotification(notification.dataset.notificationMessage, notification.dataset.notificationType);

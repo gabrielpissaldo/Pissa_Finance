@@ -20,6 +20,7 @@ class TransactionUpdate(BaseModel):
     amount: float 
     type: str 
     category: str | None = None
+    transaction_date: str
 
 
 router = APIRouter(
@@ -119,13 +120,15 @@ def update_transaction(
             description = ?,
             amount = ?,
             type = ?,
-            category = ?
+            category = ?,
+            transaction_date = ?
         WHERE id = ?
     """, (
         transaction.description,
         transaction.amount,
         transaction.type,
         transaction.category,
+        transaction.transaction_date,
         transaction_id
     ))
 
