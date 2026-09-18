@@ -1,6 +1,5 @@
 (() => {
   const state = {
-    data: window.MockData,
     filter: 'all',
     modal: null,
     transactionMode: 'create',
@@ -135,12 +134,24 @@
   
   async function renderTransactions() {
     const items = await loadTransactions();
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    const monthlyItems = items.filter(item => {
+      const date = new Date(item.transaction_date + 'T00:00:00');
+
+      return (
+        date.getMonth() === currentMonth &&
+        date.getFullYear() === currentYear
+      );
+    });
     
-    const income = items
+    const income = monthlyItems
       .filter(x => x.type === 'income')
       .reduce((sum, x) => sum + x.amount, 0);
     
-    const outgoing = items
+    const outgoing = monthlyItems
       .filter(x => x.type !== 'income')
       .reduce((sum, x) => sum + x.amount, 0);
     
@@ -148,7 +159,9 @@
     $('#month-income').textContent = '+ ' + money(income);
     $('#month-expense').textContent = '− ' + money(outgoing);
     
-    const visible = state.filter === 'all' ? items : items.filter(x => x.type === state.filter);
+    const visible  = state.filter === 'all'
+      ? items
+      : items.filter(x => x.type === state.filter);
     
     $('#transaction-list').innerHTML = visible.length ? visible.map(item => transactionMarkup(item, true)).join('') : '<p class="page-intro">Nenhuma movimentação encontrada.</p>';
   }
@@ -332,6 +345,7 @@
 
   await renderHome();
   await renderGoals();
+  await renderDashboard();
 
   showNotification(
     'Meta excluída com sucesso',
@@ -379,6 +393,7 @@
 
     await renderHome();
     await renderTransactions();
+    await renderDashboard();
 
     showNotification('Movimentação excluída com sucesso', 'success');
   }
@@ -416,6 +431,7 @@
 
       await renderHome();
       await renderGoals();
+      await renderDashboard();
 
       closeModal();
 
@@ -457,6 +473,7 @@
 
         await renderHome();
         await renderTransactions();
+        await renderDashboard();
 
         closeModal();
         showNotification('Movimentação atualizada com sucesso', 'success');
