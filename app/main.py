@@ -10,6 +10,8 @@ from app.routes.goals import router as goals_router
 
 from app.routes.dashboard import router as dashboard_router
 
+from app.routes.investments import router as investments_router
+
 from fastapi.staticfiles import StaticFiles
 
 
@@ -27,6 +29,7 @@ app = FastAPI(
 app.include_router(transactions_router)
 app.include_router(goals_router)
 app.include_router(dashboard_router)
+app.include_router(investments_router)
 
 
 @app.get("/health")

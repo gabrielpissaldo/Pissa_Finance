@@ -6,8 +6,11 @@
     editingTransactionId: null,
     goalMode: 'create',
     editingGoalId: null,
+    investmentMode: 'create',
+    editingInvestmentId: null,
     transactions: [],
-    goals: []
+    goals: [],
+    investments: []
   };
   const money = value => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const $ = selector => document.querySelector(selector);
@@ -168,6 +171,37 @@
   
   async function renderGoals() { $('#goal-list').innerHTML = (await loadGoals()).map(goal => goalMarkup(goal, true)).join(''); }
 
+  // Future integration point: GET /api/investments/
+  async function loadInvestments() {
+    return state.investments;
+  }
+
+  // Future integration point: POST /api/investments/
+  async function prepareCreateInvestment(payload) {
+    void payload;
+    return false;
+  }
+
+  // Future integration point: PUT /api/investments/{id}
+  async function prepareUpdateInvestment(id, payload) {
+    void id;
+    void payload;
+    return false;
+  }
+
+  // Future integration point: DELETE /api/investments/{id}
+  async function prepareDeleteInvestment(id) {
+    void id;
+    return false;
+  }
+
+  async function renderInvestments() {
+    const investments = await loadInvestments();
+    $('#investment-list').innerHTML = investments.length
+      ? ''
+      : '<p class="page-intro">Nenhum investimento cadastrado.</p>';
+  }
+
   function renderExpenseCategories(categories) {
     const donut = $('#expense-donut');
     const legend = $('#expense-legend');
@@ -234,9 +268,33 @@
     document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.screen === screen));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+  function investmentSpecificFields(investmentType) {
+    if (investmentType === 'fixed_income') return `<div class="investment-fields"><p class="investment-fields-title">Dados da renda fixa</p><label class="field">Tipo de rentabilidade<select name="rate_type"><option value="cdi">CDI</option><option value="selic">SELIC</option><option value="ipca">IPCA</option><option value="prefixed">PREFIXED</option></select></label><div id="fixed-income-rate-fields"></div><label class="field">Data de vencimento<input name="maturity_date" type="date"></label></div>`;
+    if (['crypto', 'stock', 'fii', 'etf'].includes(investmentType)) return `<div class="investment-fields"><p class="investment-fields-title">Dados do ativo</p><label class="field">Símbolo<input name="symbol" required placeholder="Ex.: BTC ou HGLG11" autocapitalize="characters"></label><div class="form-row"><label class="field">Quantidade<input name="quantity" required inputmode="decimal" placeholder="0,00"></label><label class="field">Preço médio<input name="average_price" required inputmode="decimal" placeholder="R$ 0,00"></label></div></div>`;
+    return '';
+  }
+
+  function fixedIncomeRateFields(rateType) {
+    if (rateType === 'prefixed') return '<label class="field">Taxa prefixada<input name="fixed_rate" required inputmode="decimal" placeholder="Ex.: 12,5% a.a."></label>';
+    const label = rateType === 'ipca' ? 'Adicional contratado' : 'Percentual contratado';
+    const placeholder = rateType === 'ipca' ? 'Ex.: + 6%' : 'Ex.: 110%';
+    return `<label class="field">${label}<input name="rate_modifier" required inputmode="decimal" placeholder="${placeholder}"></label>`;
+  }
+
+  function updateInvestmentFormFields() {
+    const form = $('#entry-form');
+    const investmentType = form.elements.investment_type?.value;
+    const details = $('#investment-specific-fields');
+    if (!details || !investmentType) return;
+    details.innerHTML = investmentSpecificFields(investmentType);
+    const rateFields = $('#fixed-income-rate-fields');
+    if (rateFields) rateFields.innerHTML = fixedIncomeRateFields(form.elements.rate_type.value);
+  }
+
   function formMarkup(type) {
     if (type === 'goal') return `<div class="form-grid"><label class="field">Nome da meta<input name="name" required placeholder="Ex.: Viagem"></label><div class="form-row"><label class="field">Valor alvo<input name="target" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Valor inicial<input name="initial" inputmode="decimal" placeholder="R$ 0,00"></label></div><label class="field">Prazo (opcional)<input name="deadline" type="month"></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar meta</button></div></div>`;
-    return `<div class="form-grid"><label class="field">Tipo<select name="type"><option value="income">Entrada</option><option value="expense">Saída</option><option value="investment">Investimento</option></select></label><label class="field">Descrição<input name="description" required placeholder="Ex.: Mercado"></label><div class="form-row"><label class="field">Valor<input name="amount" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Categoria<input name="category" required placeholder="Ex.: Alimentação"></label></div><label class="field">Data<input name="date" type="date" value="2026-09-10"></label><label class="field">Observação<textarea name="note" placeholder="Opcional"></textarea></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar</button></div></div>`;
+    if (type === 'investment') return `<div class="form-grid"><label class="field">Tipo de investimento<select name="investment_type" required><option value="fixed_income">Renda fixa</option><option value="crypto">Cripto</option><option value="stock">Ação</option><option value="fii">FII</option><option value="etf">ETF</option><option value="other">Outro</option></select></label><label class="field">Nome<input name="name" required placeholder="Ex.: Tesouro Selic 2029"></label><div class="form-row"><label class="field">Valor aportado<input name="amount_invested" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Data do investimento<input name="started_at" type="date" required></label></div><div id="investment-specific-fields"></div><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Salvar investimento</button></div></div>`;
+    return `<div class="form-grid"><label class="field">Tipo<select name="type"><option value="income">Entrada</option><option value="expense">Saída</option></select></label><label class="field">Descrição<input name="description" required placeholder="Ex.: Mercado"></label><div class="form-row"><label class="field">Valor<input name="amount" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Categoria<input name="category" required placeholder="Ex.: Alimentação"></label></div><label class="field">Data<input name="date" type="date" value="2026-09-10"></label><label class="field">Observação<textarea name="note" placeholder="Opcional"></textarea></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar</button></div></div>`;
   }
   function openModal(type, modalMode = 'create') {
     state.modal = type;
@@ -248,8 +306,13 @@
       state.goalMode = modalMode;
       if (modalMode === 'create') state.editingGoalId = null;
     }
-    $('#modal-title').textContent = type === 'goal' ? modalMode === 'edit' ? 'Editar meta' : 'Nova meta' : modalMode === 'edit' ? 'Editar movimentação' : 'Nova movimentação';
+    if (type === 'investment') {
+      state.investmentMode = modalMode;
+      if (modalMode === 'create') state.editingInvestmentId = null;
+    }
+    $('#modal-title').textContent = type === 'goal' ? modalMode === 'edit' ? 'Editar meta' : 'Nova meta' : type === 'investment' ? modalMode === 'edit' ? 'Editar investimento' : 'Novo investimento' : modalMode === 'edit' ? 'Editar movimentação' : 'Nova movimentação';
     $('#entry-form').innerHTML = formMarkup(type);
+    if (type === 'investment') updateInvestmentFormFields();
     $('#modal-backdrop').hidden = false;
     setTimeout(() => $('#entry-form input')?.focus(), 50);
   }
@@ -271,6 +334,10 @@
     const transaction = getTransactionById(id);
     if (!transaction) {
       showNotification('Movimentação não encontrada', 'error');
+      return;
+    }
+    if (transaction.type === 'investment') {
+      showNotification('Investimentos serão gerenciados pela nova área.', 'error');
       return;
     }
 
@@ -405,6 +472,8 @@
     state.editingTransactionId = null;
     state.goalMode = 'create';
     state.editingGoalId = null;
+    state.investmentMode = 'create';
+    state.editingInvestmentId = null;
   }
   document.querySelector('[data-close-modal]').addEventListener('click', closeModal);
   function parseAmount(value) { return Number(String(value).replace(/[^0-9,.-]/g, '').replace('.', '').replace(',', '.')) || 0; }
@@ -412,6 +481,26 @@
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const isGoal = state.modal === 'goal';
+    const isInvestment = state.modal === 'investment';
+
+    if (isInvestment) {
+      const investmentPayload = {
+        name: form.get('name'),
+        amount_invested: parseAmount(form.get('amount_invested')),
+        started_at: form.get('started_at'),
+        investment_type: form.get('investment_type'),
+        rate_type: form.get('rate_type') || null,
+        rate_modifier: form.get('rate_modifier') || null,
+        fixed_rate: form.get('fixed_rate') || null,
+        maturity_date: form.get('maturity_date') || null,
+        symbol: form.get('symbol') || null,
+        quantity: form.get('quantity') ? parseAmount(form.get('quantity')) : null,
+        average_price: form.get('average_price') ? parseAmount(form.get('average_price')) : null
+      };
+      await prepareCreateInvestment(investmentPayload);
+      showNotification('Integração de investimentos ainda não está disponível.', 'error');
+      return;
+    }
 
     if (isGoal) {
       const goalPayload = {
@@ -518,11 +607,19 @@
     const notification = event.target.closest('[data-notification-message]'); if (notification) showNotification(notification.dataset.notificationMessage, notification.dataset.notificationType);
     const filter = event.target.closest('[data-filter]'); if (filter) { state.filter = filter.dataset.filter; document.querySelectorAll('.filter').forEach(x => x.classList.toggle('active', x === filter)); renderTransactions(); }
   });
+  $('#entry-form').addEventListener('change', event => {
+    if (state.modal !== 'investment') return;
+    if (event.target.name === 'investment_type') updateInvestmentFormFields();
+    if (event.target.name === 'rate_type') {
+      const rateFields = $('#fixed-income-rate-fields');
+      if (rateFields) rateFields.innerHTML = fixedIncomeRateFields(event.target.value);
+    }
+  });
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     if (!$('#modal-backdrop').hidden) closeModal();
     else if (!$('#notification').hidden) hideNotification();
   });
   renderCurrentMonth();
-  renderHome(); renderTransactions(); renderGoals(); renderDashboard();
+  renderHome(); renderTransactions(); renderGoals(); renderInvestments(); renderDashboard();
 })();

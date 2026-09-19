@@ -43,6 +43,15 @@
         <div class="goal-list" id="goal-list"></div>
       </section>
 
+      <section class="screen" id="investments" aria-labelledby="investments-title">
+        <div class="page-heading"><div><p class="eyebrow">Patrimônio</p><h2 id="investments-title">Investimentos</h2></div><button class="primary-button add-button" data-open-modal="investment">+ Novo</button></div>
+        <section class="dashboard-stats investment-summary" aria-label="Resumo de investimentos">
+          <article class="stat-card"><span>Total aportado</span><strong>—</strong></article>
+          <article class="stat-card"><span>Posições</span><strong>—</strong></article>
+        </section>
+        <div class="investment-list" id="investment-list"><p class="page-intro">Nenhum investimento cadastrado.</p></div>
+      </section>
+
       <section class="screen" id="dashboard" aria-labelledby="dashboard-title">
         <div class="page-heading"><div><p class="eyebrow">Visão geral</p><h2 id="dashboard-title">Dashboard</h2></div></div>
         <section class="dashboard-stats" id="dashboard-stats"></section>
@@ -52,7 +61,7 @@
     </main>
 
     <nav class="bottom-nav" aria-label="Navegação principal">
-      <button class="nav-item active" data-screen="home"><span>⌂</span>Home</button><button class="nav-item" data-screen="transactions"><span>↕</span>Movimentações</button><button class="nav-item" data-screen="goals"><span>◎</span>Metas</button><button class="nav-item" data-screen="dashboard"><span>▥</span>Dashboard</button>
+      <button class="nav-item active" data-screen="home"><span>⌂</span>Home</button><button class="nav-item" data-screen="transactions"><span>↕</span>Movimentações</button><button class="nav-item" data-screen="goals"><span>◎</span>Metas</button><button class="nav-item" data-screen="investments"><span>◇</span>Investimentos</button><button class="nav-item" data-screen="dashboard"><span>▥</span>Dashboard</button>
     </nav>
 
     <div class="notification" id="notification" role="status" aria-live="polite" hidden>
