@@ -74,6 +74,21 @@ def init_db():
             ON DELETE CASCADE
         )
     """)
+    connection.execute("""
+    CREATE TABLE IF NOT EXISTS investment_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investment_id INTEGER NOT NULL,
+        transaction_id INTEGER,
+        movement_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        quantity REAL,
+        movement_date TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (investment_id)
+            REFERENCES investments(id)
+            ON DELETE CASCADE
+        )
+    """)
 
     connection.commit()
     connection.close()
