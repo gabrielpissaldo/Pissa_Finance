@@ -1,30 +1,6 @@
 # Pissa Finance
 
-Sistema pessoal de finanças, mobile-first, destinado a rodar localmente em Docker no Samsunguinho e ser acessado pelo navegador — especialmente por iPhone em rede privada/Tailscale.
-
-Transactions, goals e Dashboard usam dados reais do FastAPI/SQLite. O Dashboard é uma camada de leitura que agrega transactions; ele não possui tabela própria.
-
-## Stack
-
-- Python 3.12
-- FastAPI, Uvicorn e Pydantic
-- SQLite
-- HTML5, CSS3 e JavaScript vanilla
-- Docker e Docker Compose
-
-## Arquitetura
-
-```text
-iPhone / navegador
-        ↓
-Frontend estático (HTML + CSS + JS)
-        ↓
-FastAPI / Uvicorn
-        ↓
-SQLite
-```
-
-O FastAPI serve tanto API quanto frontend via `StaticFiles`, portanto a UI usa rotas relativas como `/api/transactions/`.
+Aplicação pessoal de finanças com FastAPI, SQLite, frontend estático (HTML/CSS/JS) e Docker. O backend serve a UI e a API na mesma origem. O Dashboard agrega `transactions`; não existe tabela de dashboard.
 
 ## Executar
 
@@ -32,130 +8,51 @@ O FastAPI serve tanto API quanto frontend via `StaticFiles`, portanto a UI usa r
 docker compose up -d --build
 ```
 
-| Serviço | Endereço |
+- Interface: `http://HOST:8001`
+- OpenAPI interativo: `http://HOST:8001/docs`
+- Health: `http://HOST:8001/health`
+- Persistência: `./data/pissa_finance.db` (bind mount `./data:/app/data`); host 8001 → container 8000.
+
+## API
+
+| Recurso | Rotas |
 |---|---|
-| Interface | `http://HOST:8001` |
-| Docs OpenAPI | `http://HOST:8001/docs` |
-| Health check | `http://HOST:8001/health` |
+| Transactions | GET/POST `/api/transactions/`; PUT/DELETE `/api/transactions/{id}` |
+| Goals | GET/POST `/api/goals/`; PUT/DELETE `/api/goals/{id}` |
+| Investments | GET/POST `/api/investments/`; PUT/DELETE `/api/investments/{id}` |
+| Contributions | POST `/api/investments/{id}/contributions`; PUT/DELETE `/api/investments/{id}/contributions/{movement_id}` |
+| Withdrawals | POST `/api/investments/{id}/withdrawals` |
+| Dashboard | GET `/api/dashboard/` |
 
-O host usa a porta 8001 e o Uvicorn roda na porta 8000 do container. O SQLite persiste em `./data/pissa_finance.db` pelo bind mount `./data:/app/data`.
+Investments aceitam `fixed_income` e `market_investment`. A criação grava `initial_contribution`, um lançamento `investment` e os detalhes específicos. Aportes posteriores gravam `contribution` e outra transaction `investment`. Movimentos financeiros e transactions correspondentes são gravados juntos. Transactions com `investment_id` não podem ser editadas/excluídas pelas rotas genéricas (409); transactions sem vínculo continuam editáveis. O tipo `investment_withdrawal` representa dinheiro recebido num resgate, **não** receita operacional: não pode ser criado nem atribuído por POST/PUT genérico de transactions (400).
 
-## Estrutura
+Cada investimento começa `active` (`closed_at: null`). Resgates só aceitam posições ativas, `amount > 0`, `withdrawal_date` no formato `YYYY-MM-DD` e data não anterior a movimentos existentes. Em renda fixa, `principal_amount` é obrigatório, positivo e no máximo o principal disponível; pode diferir do `amount` recebido. Em mercado, `quantity` é obrigatória, positiva e no máximo a posição atual; não envie `principal_amount`: o backend calcula `average_price × quantity`. Se `amount_invested`, `quantity` e `average_price` de uma posição de mercado estiverem inconsistentes, o resgate é recusado (409), sem descartar custo: corrija a posição antes do primeiro withdrawal pela rota PUT de investments. Resgate parcial preserva o preço médio; resgate total zera posição e fecha o investimento na `withdrawal_date`. Operações tão pequenas que não reduzem efetivamente o custo ou as unidades em SQLite REAL são rejeitadas (400), sem gerar entrada de caixa. A transaction gerada tem o mesmo valor recebido (`amount`) e a mesma data do movimento. Bancos existentes ganham as colunas novas por migração idempotente no startup.
 
-```text
-app/
-├── main.py                    # FastAPI, routers, lifespan e StaticFiles
-├── database.py                # SQLite e schema inicial
-└── routes/
-    ├── transactions.py        # CRUD de transactions
-    ├── goals.py               # CRUD de goals
-    └── dashboard.py           # Agregações de leitura do Dashboard
-frontend/
-├── index.html
-├── css/
-└── js/
-    ├── app.js                 # Integrações HTTP e renderização
-    └── mock-data.js           # Arquivo legado, sem uso ativo no Dashboard
-data/pissa_finance.db
-Dockerfile
-docker-compose.yml
+Investimentos fechados não recebem novos aportes ou resgates (409). Aportes novos em posição parcialmente resgatada são permitidos apenas com `contribution_date` em `YYYY-MM-DD` igual ou posterior ao último withdrawal; aportes retroativos são rejeitados (400). Para não recalcular incorretamente o custo histórico após resgate, PUT de investment e PUT/DELETE de contributions ficam bloqueados (409) se a posição já tiver um withdrawal. A exclusão do investment, quando solicitada pela rota de investments, remove também **todo** o histórico e suas transactions vinculadas; é destrutiva. Não há PUT/DELETE de withdrawals neste bloco.
+
+O Dashboard mantém o contrato `income`, `expenses`, `invested`, `balance`, `categories`, `monthly`. Agora `balance = income - expenses - invested + resgates`; cada resgate soma no mês de `transaction_date`, sem aumentar `income` ou `invested`. `categories` inclui apenas expenses.
+
+**Frontend:** Home e Dashboard leem a API. Transactions e goals têm fluxos na UI, mas Investments ainda contém pontos de integração inativos e não exibe posições reais. O frontend **não foi alterado** neste bloco: a lista de transactions não trata `investment_withdrawal` como entrada, seu subtotal mensal local pode divergir do Dashboard e botões de editar/excluir transactions vinculadas recebem 409. Use `/docs` para testar investimentos enquanto a UI não for integrada.
+
+## Roteiro manual em `/docs`
+
+Use **Try it out** em cada endpoint (datas e valores de exemplo; crie investimentos de teste em banco descartável). O `id` da criação substitui `{id}` nas chamadas seguintes. Use GET `/api/investments/` para conferir `amount_invested`, `status`, `closed_at` e `details`; GET `/api/transactions/` para achar `transaction_id` e conferir o lançamento. Os movimentos ainda não têm endpoint GET: para inspecionar `principal_amount`/`movement_type`, consulte `SELECT * FROM investment_movements WHERE investment_id = <id> ORDER BY id;` diretamente no SQLite de teste. As etapas b e d usam o mesmo ID criado nas etapas a e c respectivamente.
+
+1. **a) Fixed parcial:** POST `/api/investments/` com `{"name":"CDB teste","investment_type":"fixed_income","amount_invested":1000,"started_at":"2026-10-01","rate_type":"CDI"}`. Depois POST `/api/investments/{id}/withdrawals` com `{"amount":450,"withdrawal_date":"2026-10-22","principal_amount":400}`. Confira principal restante 600, `status=active`, movement `withdrawal` e transaction `investment_withdrawal` de 450.
+2. **b) Fixed total:** no mesmo `{id}`, POST withdrawals com `{"amount":620,"withdrawal_date":"2026-10-23","principal_amount":600}`. Confira principal 0, `status=closed`, `closed_at=2026-10-23`.
+3. **c) Market parcial:** POST `/api/investments/` com `{"name":"Bitcoin teste","investment_type":"market_investment","amount_invested":1000,"started_at":"2026-10-01","asset_type":"crypto","symbol":"BTC","quantity":10,"average_price":100}`. POST withdrawals com `{"amount":350,"withdrawal_date":"2026-10-22","quantity":3}`. Confira principal 700, quantidade 7, preço médio 100; movimento com `principal_amount=300` e transaction de 350.
+4. **d) Market total:** no ID de c, POST withdrawals com `{"amount":750,"withdrawal_date":"2026-10-23","quantity":7}`. Confira principal, quantidade e preço médio em 0, `status=closed` e `closed_at=2026-10-23`.
+5. **e) Aporte em closed:** POST `/api/investments/{id}/contributions` (ID da etapa b ou d) com `{"amount":50,"contribution_date":"2026-10-24"}`. Esperado: **409**, sem movimento/transaction novos.
+6. **f) Transaction vinculada:** GET `/api/transactions/`, copie um `id` com `investment_id` não nulo; PUT `/api/transactions/{id}` com `{"description":"Tentativa","amount":1,"type":"income","transaction_date":"2026-10-24"}` e DELETE `/api/transactions/{id}`. Ambos devem devolver **409**, mantendo o lançamento intacto.
+
+## Testes automatizados
+
+Com Python 3.12 e `requirements.txt` instalados, adicione `httpx2` no ambiente **de teste** (requerido pelo TestClient desta versão do Starlette) e execute `python -m unittest discover -s tests -v` (os testes usam bancos SQLite temporários). Alternativa isolada com Docker:
+
+```bash
+docker build -t pissa-finance-test-local .
+docker run --rm -v "$PWD:/workspace" -w /workspace pissa-finance-test-local \
+  sh -c 'pip install -q httpx2 && python -m unittest discover -s tests -v'
 ```
 
-## API e modelos
-
-### Transactions
-
-Campos: `id`, `description`, `amount`, `type`, `category`, `transaction_date`, `created_at`.
-
-| Método | Rota |
-|---|---|
-| POST | `/api/transactions/` |
-| GET | `/api/transactions/` |
-| PUT | `/api/transactions/{id}` |
-| DELETE | `/api/transactions/{id}` |
-
-`id` é SQLite AUTOINCREMENT. `transaction_date` é a data financeira escolhida; `created_at` é criado pelo backend no fuso `America/Sao_Paulo`. Tipos usados pela UI: `income`, `expense` e `investment`.
-
-### Goals
-
-Campos: `id`, `name`, `target_amount`, `current_amount`, `deadline`, `created_at`.
-
-| Método | Rota |
-|---|---|
-| POST | `/api/goals/` |
-| GET | `/api/goals/` |
-| PUT | `/api/goals/{id}` |
-| DELETE | `/api/goals/{id}` |
-
-### Dashboard
-
-`GET /api/dashboard/` deriva dados exclusivamente da tabela `transactions`:
-
-```text
-transactions → dashboard.py → cálculos agregados → frontend
-```
-
-Contrato:
-
-```json
-{
-  "income": 0,
-  "expenses": 0,
-  "invested": 0,
-  "balance": 0,
-  "categories": [{"name": "Alimentação", "value": 0}],
-  "monthly": [{"month": "Abr", "value": 0}]
-}
-```
-
-`balance = income - expenses - invested`. `categories` agrupa somente `expense` por categoria; categorias nulas/vazias viram `Sem categoria`. `monthly` retorna os últimos seis meses, incluindo o atual, com saldo líquido mensal baseado em `transaction_date`.
-
-## Estado de implementação
-
-- [x] FastAPI, SQLite persistente e Docker Compose.
-- [x] Frontend servido pelo FastAPI.
-- [x] CRUD e integração UI/API de transactions.
-- [x] CRUD e integração UI/API de goals.
-- [x] Home com `income`, `expenses`, `invested` e `balance` reais.
-- [x] Dashboard com cards, donut/legenda de categorias e evolução mensal reais.
-- [x] Estados vazios do Dashboard: categorias vazias e seis meses com zero.
-
-## Roadmap
-
-### Fase 2 — Investimentos reais
-
-- [ ] Definir modelo e tabela `investments`.
-- [ ] Relacionar aportes com posições.
-- [ ] Separar valor aportado de valor atual.
-- [ ] Criar service layer de investimentos.
-
-### Fase 3 — Dados externos
-
-- [ ] Fontes externas de mercado, cripto e renda fixa.
-- [ ] CDI, Selic e eventualmente ações/ETFs.
-- [ ] Cache e tratamento de falhas de APIs externas.
-
-### Fase 4 — Rentabilidade
-
-- [ ] Valor atual, total aportado, lucro/prejuízo e rentabilidade.
-- [ ] Patrimônio financeiro real e separação de saldo disponível.
-
-### Fase 5 — Projeções
-
-- [ ] Aportes recorrentes e projeções para 6 meses, 1 ano e múltiplos anos.
-- [ ] Cenários conservador/base/otimista.
-
-Projeções devem usar matemática e dados reais, nunca números inventados.
-
-### Fase 6 — UX e qualidade
-
-- [ ] Loading, erros globais e validações melhores.
-- [ ] Datas em pt-BR, acessibilidade e revisão mobile.
-- [ ] Limpar o arquivo/mock residual após confirmar que não há consumidores.
-
-### Fase 7 — Futuro
-
-- [ ] Autenticação, múltiplos usuários, exportação, backups e relatórios.
-- [ ] Avaliar integração com AI-SERVER somente se fizer sentido.
-
-Para detalhes técnicos e decisões de continuidade, consulte [PROJECT_STATE.md](PROJECT_STATE.md).
+Consulte [PROJECT_STATE.md](PROJECT_STATE.md) para schema, limites atuais e decisões técnicas.

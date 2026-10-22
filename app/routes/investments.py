@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
+from math import isclose, isfinite
 
 from app.database import get_connection
 
@@ -57,6 +58,38 @@ class InvestmentContributionUpdate(BaseModel):
 
     # only for market investment
     quantity: float | None = None
+
+
+class InvestmentWithdrawalCreate(BaseModel):
+    amount: float
+    withdrawal_date: str
+    quantity: float | None = None
+    principal_amount: float | None = None
+
+
+def _parse_movement_date(value: str, *, existing: bool = False) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+        if parsed.isoformat() == value:
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    if existing:
+        raise HTTPException(status_code=409, detail="Existing investment movement has an invalid date")
+    raise HTTPException(status_code=400, detail="Movement date must be YYYY-MM-DD")
+
+
+def _latest_movement_date(connection, investment_id: int, movement_type: str | None = None):
+    query = "SELECT movement_date FROM investment_movements WHERE investment_id = ?"
+    parameters = (investment_id,)
+    if movement_type is not None:
+        query += " AND movement_type = ?"
+        parameters = (investment_id, movement_type)
+    dates = [
+        _parse_movement_date(row["movement_date"], existing=True)
+        for row in connection.execute(query, parameters)
+    ]
+    return max(dates, default=None)
     
 router = APIRouter(
     prefix="/api/investments",
@@ -197,6 +230,123 @@ def create_investment(investment: InvestmentCreate):
         connection.close()
 
 
+@router.post("/{investment_id}/withdrawals")
+def create_withdrawal(investment_id: int, withdrawal: InvestmentWithdrawalCreate):
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        investment = connection.execute("""
+            SELECT id, name, investment_type, amount_invested, status
+            FROM investments WHERE id = ?
+        """, (investment_id,)).fetchone()
+        if investment is None:
+            raise HTTPException(status_code=404, detail="Investment not found")
+        if investment["status"] != "active":
+            raise HTTPException(status_code=409, detail="Investment is closed")
+        withdrawal_date = _parse_movement_date(withdrawal.withdrawal_date)
+        latest_date = _latest_movement_date(connection, investment_id)
+        if latest_date is not None and withdrawal_date < latest_date:
+            raise HTTPException(status_code=400, detail="Withdrawal cannot precede existing movements")
+        if not isfinite(withdrawal.amount) or withdrawal.amount <= 0:
+            raise HTTPException(status_code=400, detail="Withdrawal amount must be greater than zero")
+
+        current_principal = investment["amount_invested"]
+        if investment["investment_type"] == "market_investment":
+            if withdrawal.principal_amount is not None:
+                raise HTTPException(status_code=400, detail="Principal amount is calculated for market investments")
+            if (withdrawal.quantity is None or not isfinite(withdrawal.quantity)
+                    or withdrawal.quantity <= 0):
+                raise HTTPException(status_code=400, detail="Quantity is required for market withdrawals")
+            details = connection.execute("""
+                SELECT quantity, average_price FROM market_investment_details
+                WHERE investment_id = ?
+            """, (investment_id,)).fetchone()
+            if details is None:
+                raise HTTPException(status_code=404, detail="Market investment details not found")
+            current_quantity = details["quantity"] or 0
+            average_price = details["average_price"] or 0
+            if (not isfinite(current_principal) or not isfinite(current_quantity)
+                    or not isfinite(average_price) or current_quantity <= 0
+                    or average_price <= 0 or not isclose(
+                        current_principal, average_price * current_quantity,
+                        rel_tol=1e-9, abs_tol=0
+                    )):
+                raise HTTPException(status_code=409, detail="Market position has an inconsistent cost basis")
+            if withdrawal.quantity > current_quantity:
+                raise HTTPException(status_code=400, detail="Quantity exceeds current position")
+            principal = average_price * withdrawal.quantity
+            if not isfinite(principal) or principal <= 0 or principal > current_principal:
+                raise HTTPException(status_code=400, detail="Invalid principal for current position")
+            closed = withdrawal.quantity == current_quantity
+            remaining_quantity = 0 if closed else current_quantity - withdrawal.quantity
+            remaining_principal = 0 if closed else current_principal - principal
+            if not closed and (
+                remaining_quantity <= 0 or remaining_quantity >= current_quantity
+                or remaining_principal <= 0 or remaining_principal >= current_principal
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Withdrawal is too small to reduce the market position"
+                )
+            connection.execute("""
+                UPDATE market_investment_details
+                SET quantity = ?, average_price = ?
+                WHERE investment_id = ?
+            """, (remaining_quantity, 0 if closed else average_price, investment_id))
+        elif investment["investment_type"] == "fixed_income":
+            if withdrawal.quantity is not None:
+                raise HTTPException(status_code=400, detail="Quantity is only valid for market investments")
+            principal = withdrawal.principal_amount
+            if (principal is None or not isfinite(principal) or principal <= 0
+                    or principal > current_principal):
+                raise HTTPException(status_code=400, detail="Principal must be positive and cannot exceed amount invested")
+            remaining_principal = current_principal - principal
+            if remaining_principal == current_principal:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Principal is too small to reduce the position"
+                )
+            closed = remaining_principal == 0
+        else:
+            raise HTTPException(status_code=400, detail="Invalid investment type")
+
+        connection.execute("""
+            UPDATE investments
+            SET amount_invested = ?, status = ?, closed_at = ?
+            WHERE id = ?
+        """, (remaining_principal, "closed" if closed else "active",
+              withdrawal.withdrawal_date if closed else None, investment_id))
+        created_at = datetime.now(ZoneInfo("America/Sao_Paulo")).isoformat()
+        transaction_cursor = connection.execute("""
+            INSERT INTO transactions
+                (description, amount, type, category, investment_id, transaction_date, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (f"Resgate de {investment['name']}", withdrawal.amount,
+              "investment_withdrawal", investment["name"], investment_id,
+              withdrawal.withdrawal_date, created_at))
+        movement_cursor = connection.execute("""
+            INSERT INTO investment_movements
+                (investment_id, transaction_id, movement_type, amount,
+                 principal_amount, quantity, movement_date, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (investment_id, transaction_cursor.lastrowid, "withdrawal",
+              withdrawal.amount, principal, withdrawal.quantity,
+              withdrawal.withdrawal_date, created_at))
+        connection.commit()
+        return {
+            "message": "Withdrawal created successfully",
+            "investment_id": investment_id,
+            "movement_id": movement_cursor.lastrowid,
+            "amount_invested": remaining_principal,
+            "status": "closed" if closed else "active"
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 @router.post("/{investment_id}/contributions")
 def create_contribution(
     investment_id: int,
@@ -205,12 +355,14 @@ def create_contribution(
     connection = get_connection()
 
     try:
+        connection.execute("BEGIN IMMEDIATE")
         investment = connection.execute("""
             SELECT
                 id,
                 name,
                 investment_type,
-                amount_invested
+                amount_invested,
+                status
             FROM investments
             WHERE id = ?
         """, (investment_id,)).fetchone()
@@ -220,6 +372,13 @@ def create_contribution(
                 status_code=404,
                 detail="Investment not found"
             )
+        if investment["status"] != "active":
+            raise HTTPException(status_code=409, detail="Investment is closed")
+
+        contribution_date = _parse_movement_date(contribution.contribution_date)
+        latest_withdrawal = _latest_movement_date(connection, investment_id, "withdrawal")
+        if latest_withdrawal is not None and contribution_date < latest_withdrawal:
+            raise HTTPException(status_code=400, detail="Contribution cannot precede a withdrawal")
 
         if contribution.amount <= 0:
             raise HTTPException(
@@ -367,6 +526,7 @@ def update_contribution(
     connection = get_connection()
 
     try:
+        connection.execute("BEGIN IMMEDIATE")
         if contribution.amount <= 0:
             raise HTTPException(
                 status_code=400,
@@ -409,6 +569,16 @@ def update_contribution(
             raise HTTPException(
                 status_code=404,
                 detail="Contribution not found"
+            )
+
+        if connection.execute("""
+            SELECT 1 FROM investment_movements
+            WHERE investment_id = ? AND movement_type = 'withdrawal'
+            LIMIT 1
+        """, (investment_id,)).fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail="Contributions cannot be edited after a withdrawal"
             )
 
         old_amount = movement["amount"]
@@ -543,6 +713,7 @@ def delete_contribution(
     connection = get_connection()
 
     try:
+        connection.execute("BEGIN IMMEDIATE")
         investment = connection.execute("""
             SELECT
                 id,
@@ -577,6 +748,16 @@ def delete_contribution(
             raise HTTPException(
                 status_code=404,
                 detail="Contribution not found"
+            )
+
+        if connection.execute("""
+            SELECT 1 FROM investment_movements
+            WHERE investment_id = ? AND movement_type = 'withdrawal'
+            LIMIT 1
+        """, (investment_id,)).fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail="Contributions cannot be deleted after a withdrawal"
             )
 
         new_total_amount = (
@@ -741,6 +922,7 @@ def update_investment(
     connection = get_connection()
 
     try:
+        connection.execute("BEGIN IMMEDIATE")
         current = connection.execute("""
             SELECT
                 id,
@@ -753,6 +935,16 @@ def update_investment(
             raise HTTPException(
                 status_code=404,
                 detail="Investment not found"
+            )
+
+        if connection.execute("""
+            SELECT 1 FROM investment_movements
+            WHERE investment_id = ? AND movement_type = 'withdrawal'
+            LIMIT 1
+        """, (investment_id,)).fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail="Investment cannot be edited after a withdrawal"
             )
 
         contributions = connection.execute("""
@@ -962,7 +1154,6 @@ def delete_investment(investment_id: int):
         connection.execute("""
             DELETE FROM transactions
             WHERE investment_id = ?
-              AND type = 'investment'
         """, (investment_id,))
 
         connection.execute("""

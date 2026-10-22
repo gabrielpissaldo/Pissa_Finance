@@ -25,6 +25,7 @@ def get_dashboard():
     income = 0
     expenses = 0
     invested = 0
+    withdrawn = 0
     category_totals = {}
     current_date = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     month_names = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
@@ -55,6 +56,10 @@ def get_dashboard():
             invested += transaction["amount"]
             monthly_value = -transaction["amount"]
 
+        elif transaction["type"] == "investment_withdrawal":
+            withdrawn += transaction["amount"]
+            monthly_value = transaction["amount"]
+
         else:
             continue
 
@@ -67,7 +72,7 @@ def get_dashboard():
         if month_key in monthly_totals:
             monthly_totals[month_key] += monthly_value
 
-    balance = income - expenses - invested
+    balance = income - expenses - invested + withdrawn
     categories = [
         {"name": name, "value": value}
         for name, value in sorted(

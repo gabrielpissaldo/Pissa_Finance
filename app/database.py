@@ -44,6 +44,8 @@ def init_db():
             name TEXT NOT NULL,
             investment_type TEXT NOT NULL,
             amount_invested REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            closed_at TEXT,
             started_at TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
@@ -81,6 +83,7 @@ def init_db():
         transaction_id INTEGER,
         movement_type TEXT NOT NULL,
         amount REAL NOT NULL,
+        principal_amount REAL,
         quantity REAL,
         movement_date TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -89,6 +92,24 @@ def init_db():
             ON DELETE CASCADE
         )
     """)
+
+    investment_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(investments)")
+    }
+    if "status" not in investment_columns:
+        connection.execute(
+            "ALTER TABLE investments ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+        )
+    if "closed_at" not in investment_columns:
+        connection.execute("ALTER TABLE investments ADD COLUMN closed_at TEXT")
+
+    movement_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(investment_movements)")
+    }
+    if "principal_amount" not in movement_columns:
+        connection.execute(
+            "ALTER TABLE investment_movements ADD COLUMN principal_amount REAL"
+        )
 
     connection.commit()
     connection.close()

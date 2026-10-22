@@ -31,6 +31,11 @@ router = APIRouter(
 
 @router.post("/")
 def create_transaction(transaction: TransactionCreate):
+    if transaction.type == "investment_withdrawal":
+        raise HTTPException(
+            status_code=400,
+            detail="Investment withdrawals must be created through investments routes"
+        )
     connection = get_connection()
     
     created_at = datetime.now(
@@ -86,26 +91,26 @@ def list_transactions():
 @router.delete("/{transaction_id}")
 def delete_transaction(transaction_id: int):
     connection = get_connection()
-
-    cursor = connection.execute("""
-        DELETE FROM transactions
-        WHERE id = ?
-    """, (transaction_id,))
-
-    connection.commit()
-
-    if cursor.rowcount == 0:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute(
+            "SELECT investment_id FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if existing["investment_id"] is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Investment transactions must be managed through investments routes"
+            )
+        connection.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+        connection.commit()
+        return {"message": "Transaction deleted"}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
         connection.close()
-        raise HTTPException(
-            status_code=404,
-            detail="Transaction not found"
-        )
-
-    connection.close()
-
-    return {
-        "message": "Transaction deleted"
-    }
     
 @router.put("/{transaction_id}")
 def update_transaction(
@@ -113,36 +118,39 @@ def update_transaction(
     transaction: TransactionUpdate
 ):
     connection = get_connection()
-
-    cursor = connection.execute("""
-        UPDATE transactions
-        SET
-            description = ?,
-            amount = ?,
-            type = ?,
-            category = ?,
-            transaction_date = ?
-        WHERE id = ?
-    """, (
-        transaction.description,
-        transaction.amount,
-        transaction.type,
-        transaction.category,
-        transaction.transaction_date,
-        transaction_id
-    ))
-
-    connection.commit()
-
-    if cursor.rowcount == 0:
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute(
+            "SELECT investment_id FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if existing["investment_id"] is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Investment transactions must be managed through investments routes"
+            )
+        if transaction.type == "investment_withdrawal":
+            raise HTTPException(
+                status_code=400,
+                detail="Investment withdrawals must be created through investments routes"
+            )
+        connection.execute("""
+            UPDATE transactions
+            SET description = ?, amount = ?, type = ?, category = ?, transaction_date = ?
+            WHERE id = ?
+        """, (
+            transaction.description,
+            transaction.amount,
+            transaction.type,
+            transaction.category,
+            transaction.transaction_date,
+            transaction_id
+        ))
+        connection.commit()
+        return {"message": "Transaction updated"}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
         connection.close()
-        raise HTTPException(
-            status_code=404,
-            detail="Transaction not found"
-        )
-
-    connection.close()
-
-    return {
-        "message": "Transaction updated"
-    }
