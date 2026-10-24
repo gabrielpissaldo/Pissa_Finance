@@ -104,3 +104,17 @@ h3{font-size:16px}
 .investment-list{display:grid;gap:12px}
 .investment-fields{display:grid;gap:13px;padding-top:4px;border-top:1px solid var(--border)}
 .investment-fields-title{font-size:12px;color:var(--green);margin:2px 0 -2px}
+.investment-card{padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:17px}
+.investment-card.closed{opacity:.76}
+.investment-card-header,.investment-card-meta,.investment-details{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.investment-card-header strong{font-size:15px;overflow-wrap:anywhere}
+.investment-type,.investment-status{font-size:11px;color:var(--muted)}
+.investment-card-header>div:first-child{min-width:0}
+.investment-status{flex:none;padding:4px 8px;border-radius:99px;background:var(--surface-2)}
+.investment-status.active{color:var(--green)}
+.investment-card-value{display:block;font-size:20px;letter-spacing:-.4px;margin:14px 0 4px}
+.investment-card-meta{font-size:12px;color:var(--muted)}
+.investment-details{justify-content:flex-start;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:13px;padding-top:12px}
+.investment-detail{font-size:11px;color:var(--muted)}
+.investment-detail strong{display:block;font-size:12px;color:var(--text);margin-top:3px}
+.investment-summary .stat-card strong{overflow-wrap:anywhere}

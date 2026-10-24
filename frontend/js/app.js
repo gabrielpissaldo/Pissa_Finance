@@ -72,25 +72,30 @@
       return state.goals;
    }
 
-  const transactionIcon = type => ({ income: '↓', expense: '↑', investment: '◇' }[type]);
-  const transactionLabel = type => ({ income: 'Entrada', expense: 'Saída', investment: 'Investimento' }[type]);
+  const transactionIcon = type => ({ income: '↓', expense: '↑', investment: '◇' }[type] || '•');
+  const transactionLabel = type => ({ income: 'Entrada', expense: 'Saída', investment: 'Investimento' }[type] || String(type || 'Movimentação'));
   function transactionMarkup(item, showActions = false) {
+    const transactionId = escapeHtml(item.id);
+    const description = escapeHtml(item.description);
+    const safeType = escapeHtml(item.type);
+    const category = escapeHtml(item.category || 'Sem categoria');
+    const transactionDate = escapeHtml(item.transaction_date);
     const sign = item.type === 'income' ? '+' : '-';
-    const actions = showActions ? `
-      <div class="transaction-actions" aria-label="Ações de ${item.description}">
-        <button class="transaction-action" type="button" data-edit-transaction="${item.id}" aria-label="Editar ${item.description}" title="Editar">✎</button>
-        <button class="transaction-action danger" type="button" data-delete-transaction="${item.id}" aria-label="Excluir ${item.description}" title="Excluir">×</button>
+    const actions = showActions && !item.investment_id ? `
+      <div class="transaction-actions" aria-label="Ações de ${description}">
+        <button class="transaction-action" type="button" data-edit-transaction="${transactionId}" aria-label="Editar ${description}" title="Editar">✎</button>
+        <button class="transaction-action danger" type="button" data-delete-transaction="${transactionId}" aria-label="Excluir ${description}" title="Excluir">×</button>
       </div>` : '';
     return `
-    <article class="transaction ${item.type}">
+    <article class="transaction ${safeType}">
       <div class="transaction-icon">${transactionIcon(item.type)}</div>
       <div class="transaction-main">
-        <strong>${item.description}</strong>
-        <span>${transactionLabel(item.type)} • ${item.category || 'Sem categoria'}</span>
+        <strong>${description}</strong>
+        <span>${escapeHtml(transactionLabel(item.type))} • ${category}</span>
       </div>
       <div class="transaction-value">
-        <strong>${sign} ${money(item.amount)}</strong>
-        <span>${item.transaction_date}</span>
+        <strong>${sign} ${money(Number(item.amount) || 0)}</strong>
+        <span>${transactionDate}</span>
       </div>${actions}
     </article>`;
   }
@@ -171,35 +176,124 @@
   
   async function renderGoals() { $('#goal-list').innerHTML = (await loadGoals()).map(goal => goalMarkup(goal, true)).join(''); }
 
-  // Future integration point: GET /api/investments/
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+  }
+
+  function parseInvestmentNumber(value) {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return null;
+    const numeric = normalized.includes(',')
+      ? normalized.replace(/\./g, '').replace(',', '.')
+      : normalized;
+    const parsed = Number(numeric);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   async function loadInvestments() {
-    return state.investments;
+    try {
+      const response = await fetch('/api/investments/');
+      if (!response.ok) throw new Error('Não foi possível carregar os investimentos.');
+      state.investments = await response.json();
+      return state.investments;
+    } catch (error) {
+      showNotification(error.message || 'Erro ao carregar investimentos.', 'error');
+      throw error;
+    }
   }
 
-  // Future integration point: POST /api/investments/
   async function prepareCreateInvestment(payload) {
-    void payload;
-    return false;
+    try {
+      const response = await fetch('/api/investments/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const error = await response.json();
+          detail = typeof error.detail === 'string' ? error.detail : '';
+        } catch (_) {
+          // Keep the friendly fallback when the server response is not JSON.
+        }
+        throw new Error(detail || 'Não foi possível cadastrar o investimento. Confira os dados e tente novamente.');
+      }
+      return true;
+    } catch (error) {
+      showNotification(error.message || 'Falha de conexão ao cadastrar investimento.', 'error');
+      return false;
+    }
   }
 
-  // Future integration point: PUT /api/investments/{id}
-  async function prepareUpdateInvestment(id, payload) {
-    void id;
-    void payload;
-    return false;
+  const investmentTypeLabels = {
+    fixed_income: 'Renda fixa',
+    market_investment: 'Mercado'
+  };
+  const assetTypeLabels = {
+    crypto: 'Cripto', stock: 'Ação', fii: 'FII', etf: 'ETF', other: 'Outro'
+  };
+  const rateTypeLabels = {
+    cdi: 'CDI', selic: 'SELIC', ipca: 'IPCA', prefixed: 'Prefixada'
+  };
+
+  function investmentDetail(label, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return `<span class="investment-detail">${escapeHtml(label)}<strong>${escapeHtml(value)}</strong></span>`;
   }
 
-  // Future integration point: DELETE /api/investments/{id}
-  async function prepareDeleteInvestment(id) {
-    void id;
-    return false;
+  function investmentMarkup(investment) {
+    const details = investment.details || {};
+    const isFixedIncome = investment.investment_type === 'fixed_income';
+    const status = investment.status === 'closed' ? 'closed' : 'active';
+    const extraDetails = isFixedIncome
+      ? [
+          investmentDetail('Taxa', rateTypeLabels[details.rate_type] || details.rate_type),
+          details.rate_modifier != null ? investmentDetail(
+            details.rate_type === 'ipca' ? 'Adicional' : 'Percentual', `${details.rate_modifier}%`
+          ) : '',
+          details.fixed_rate != null ? investmentDetail('Taxa prefixada', `${details.fixed_rate}% a.a.`) : '',
+          investmentDetail('Vencimento', details.maturity_date)
+        ].join('')
+      : [
+          investmentDetail('Ativo', assetTypeLabels[details.asset_type] || details.asset_type),
+          investmentDetail('Símbolo', details.symbol),
+          details.quantity != null ? investmentDetail('Quantidade', Number(details.quantity).toLocaleString('pt-BR')) : '',
+          details.average_price != null ? investmentDetail('Preço médio', money(Number(details.average_price))) : ''
+        ].join('');
+
+    return `<article class="investment-card ${status}">
+      <div class="investment-card-header">
+        <div><strong>${escapeHtml(investment.name)}</strong><p class="investment-type">${escapeHtml(investmentTypeLabels[investment.investment_type] || investment.investment_type)}</p></div>
+        <span class="investment-status ${status}">${status === 'closed' ? 'Encerrado' : 'Ativo'}</span>
+      </div>
+      <strong class="investment-card-value">${money(Number(investment.amount_invested) || 0)}</strong>
+      <div class="investment-card-meta"><span>Início</span><time datetime="${escapeHtml(investment.started_at)}">${escapeHtml(investment.started_at)}</time></div>
+      ${extraDetails ? `<div class="investment-details">${extraDetails}</div>` : ''}
+    </article>`;
   }
 
   async function renderInvestments() {
-    const investments = await loadInvestments();
-    $('#investment-list').innerHTML = investments.length
-      ? ''
-      : '<p class="page-intro">Nenhum investimento cadastrado.</p>';
+    const list = $('#investment-list');
+    list.innerHTML = '<p class="page-intro">Carregando investimentos…</p>';
+    try {
+      const investments = await loadInvestments();
+      const total = investments.reduce((sum, item) => sum + (Number(item.amount_invested) || 0), 0);
+      $('#investment-total').textContent = money(total);
+      $('#investment-count').textContent = String(investments.length);
+      list.innerHTML = investments.length
+        ? investments.map(investmentMarkup).join('')
+        : '<p class="page-intro">Nenhum investimento cadastrado.</p>';
+      return true;
+    } catch (_) {
+      state.investments = [];
+      $('#investment-total').textContent = money(0);
+      $('#investment-count').textContent = '0';
+      list.innerHTML = '<p class="page-intro">Não foi possível carregar os investimentos. Tente novamente mais tarde.</p>';
+      return false;
+    }
   }
 
   function renderExpenseCategories(categories) {
@@ -269,16 +363,16 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
   function investmentSpecificFields(investmentType) {
-    if (investmentType === 'fixed_income') return `<div class="investment-fields"><p class="investment-fields-title">Dados da renda fixa</p><label class="field">Tipo de rentabilidade<select name="rate_type"><option value="cdi">CDI</option><option value="selic">SELIC</option><option value="ipca">IPCA</option><option value="prefixed">PREFIXED</option></select></label><div id="fixed-income-rate-fields"></div><label class="field">Data de vencimento<input name="maturity_date" type="date"></label></div>`;
-    if (['crypto', 'stock', 'fii', 'etf'].includes(investmentType)) return `<div class="investment-fields"><p class="investment-fields-title">Dados do ativo</p><label class="field">Símbolo<input name="symbol" required placeholder="Ex.: BTC ou HGLG11" autocapitalize="characters"></label><div class="form-row"><label class="field">Quantidade<input name="quantity" required inputmode="decimal" placeholder="0,00"></label><label class="field">Preço médio<input name="average_price" required inputmode="decimal" placeholder="R$ 0,00"></label></div></div>`;
+    if (investmentType === 'fixed_income') return `<div class="investment-fields"><p class="investment-fields-title">Dados da renda fixa</p><label class="field">Tipo de rentabilidade<select name="rate_type"><option value="cdi">CDI</option><option value="selic">SELIC</option><option value="ipca">IPCA</option><option value="prefixed">Prefixada</option></select></label><div id="fixed-income-rate-fields"></div><label class="field">Data de vencimento<input name="maturity_date" type="date"></label></div>`;
+    if (investmentType === 'market_investment') return `<div class="investment-fields"><p class="investment-fields-title">Dados do ativo</p><label class="field">Tipo de ativo<select name="asset_type" required><option value="crypto">Cripto</option><option value="stock">Ação</option><option value="fii">FII</option><option value="etf">ETF</option><option value="other">Outro</option></select></label><label class="field">Símbolo<input name="symbol" required placeholder="Ex.: BTC ou HGLG11" autocapitalize="characters"></label><div class="form-row"><label class="field">Quantidade<input name="quantity" type="number" required min="0.00000001" step="any" inputmode="decimal" placeholder="0,00"></label><label class="field">Preço médio<input name="average_price" type="number" required min="0.01" step="any" inputmode="decimal" placeholder="R$ 0,00"></label></div></div>`;
     return '';
   }
 
   function fixedIncomeRateFields(rateType) {
-    if (rateType === 'prefixed') return '<label class="field">Taxa prefixada<input name="fixed_rate" required inputmode="decimal" placeholder="Ex.: 12,5% a.a."></label>';
-    const label = rateType === 'ipca' ? 'Adicional contratado' : 'Percentual contratado';
-    const placeholder = rateType === 'ipca' ? 'Ex.: + 6%' : 'Ex.: 110%';
-    return `<label class="field">${label}<input name="rate_modifier" required inputmode="decimal" placeholder="${placeholder}"></label>`;
+    if (rateType === 'prefixed') return '<label class="field">Taxa prefixada (% a.a.)<input name="fixed_rate" type="number" required min="0" step="any" inputmode="decimal" placeholder="Ex.: 12,5"></label>';
+    const label = rateType === 'ipca' ? 'Adicional contratado (%)' : 'Percentual contratado (%)';
+    const placeholder = rateType === 'ipca' ? 'Ex.: 6' : 'Ex.: 110';
+    return `<label class="field">${label}<input name="rate_modifier" type="number" required min="0" step="any" inputmode="decimal" placeholder="${placeholder}"></label>`;
   }
 
   function updateInvestmentFormFields() {
@@ -293,7 +387,16 @@
 
   function formMarkup(type) {
     if (type === 'goal') return `<div class="form-grid"><label class="field">Nome da meta<input name="name" required placeholder="Ex.: Viagem"></label><div class="form-row"><label class="field">Valor alvo<input name="target" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Valor inicial<input name="initial" inputmode="decimal" placeholder="R$ 0,00"></label></div><label class="field">Prazo (opcional)<input name="deadline" type="month"></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar meta</button></div></div>`;
-    if (type === 'investment') return `<div class="form-grid"><label class="field">Tipo de investimento<select name="investment_type" required><option value="fixed_income">Renda fixa</option><option value="crypto">Cripto</option><option value="stock">Ação</option><option value="fii">FII</option><option value="etf">ETF</option><option value="other">Outro</option></select></label><label class="field">Nome<input name="name" required placeholder="Ex.: Tesouro Selic 2029"></label><div class="form-row"><label class="field">Valor aportado<input name="amount_invested" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Data do investimento<input name="started_at" type="date" required></label></div><div id="investment-specific-fields"></div><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Salvar investimento</button></div></div>`;
+    if (type === 'investment') return `<div class="form-grid">
+      <label class="field">Tipo de investimento<select name="investment_type" required><option value="fixed_income">Renda fixa</option><option value="market_investment">Mercado</option></select></label>
+      <label class="field">Nome<input name="name" required maxlength="120" placeholder="Ex.: Tesouro Selic 2029"></label>
+      <div class="form-row">
+        <label class="field">Valor aportado<input name="amount_invested" type="number" required min="0.01" step="any" inputmode="decimal" placeholder="R$ 0,00"></label>
+        <label class="field">Data do investimento<input name="started_at" type="date" required></label>
+      </div>
+      <div id="investment-specific-fields"></div>
+      <div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Salvar investimento</button></div>
+    </div>`;
     return `<div class="form-grid"><label class="field">Tipo<select name="type"><option value="income">Entrada</option><option value="expense">Saída</option></select></label><label class="field">Descrição<input name="description" required placeholder="Ex.: Mercado"></label><div class="form-row"><label class="field">Valor<input name="amount" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Categoria<input name="category" required placeholder="Ex.: Alimentação"></label></div><label class="field">Data<input name="date" type="date" value="2026-09-10"></label><label class="field">Observação<textarea name="note" placeholder="Opcional"></textarea></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar</button></div></div>`;
   }
   function openModal(type, modalMode = 'create') {
@@ -485,20 +588,41 @@
 
     if (isInvestment) {
       const investmentPayload = {
-        name: form.get('name'),
-        amount_invested: parseAmount(form.get('amount_invested')),
+        name: String(form.get('name') || '').trim(),
+        amount_invested: parseInvestmentNumber(form.get('amount_invested')),
         started_at: form.get('started_at'),
-        investment_type: form.get('investment_type'),
-        rate_type: form.get('rate_type') || null,
-        rate_modifier: form.get('rate_modifier') || null,
-        fixed_rate: form.get('fixed_rate') || null,
-        maturity_date: form.get('maturity_date') || null,
-        symbol: form.get('symbol') || null,
-        quantity: form.get('quantity') ? parseAmount(form.get('quantity')) : null,
-        average_price: form.get('average_price') ? parseAmount(form.get('average_price')) : null
+        investment_type: form.get('investment_type')
       };
-      await prepareCreateInvestment(investmentPayload);
-      showNotification('Integração de investimentos ainda não está disponível.', 'error');
+      if (investmentPayload.investment_type === 'fixed_income') {
+        investmentPayload.rate_type = form.get('rate_type');
+        investmentPayload.maturity_date = form.get('maturity_date') || null;
+        if (investmentPayload.rate_type === 'prefixed') {
+          investmentPayload.fixed_rate = parseInvestmentNumber(form.get('fixed_rate'));
+        } else {
+          investmentPayload.rate_modifier = parseInvestmentNumber(form.get('rate_modifier'));
+        }
+      } else {
+        investmentPayload.asset_type = form.get('asset_type');
+        investmentPayload.symbol = String(form.get('symbol') || '').trim();
+        investmentPayload.quantity = parseInvestmentNumber(form.get('quantity'));
+        investmentPayload.average_price = parseInvestmentNumber(form.get('average_price'));
+      }
+
+      const success = await prepareCreateInvestment(investmentPayload);
+      if (!success) return;
+      closeModal();
+      const refreshResults = await Promise.allSettled([
+        renderInvestments(), renderHome(), renderTransactions(), renderDashboard()
+      ]);
+      const refreshFailed = refreshResults.some(result =>
+        result.status === 'rejected' || result.value === false
+      );
+      showNotification(
+        refreshFailed
+          ? 'Investimento cadastrado, mas algumas telas não atualizaram. Recarregue a página.'
+          : 'Investimento cadastrado com sucesso',
+        refreshFailed ? 'error' : 'success'
+      );
       return;
     }
 
