@@ -61,9 +61,9 @@ h3{font-size:16px}
 .month-summary{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:17px;margin:21px 0}
 .month-summary>span{font-size:12px;color:var(--muted)}
 .month-summary strong{font-size:27px;display:block;margin:6px 0 13px}
-.month-summary div{display:flex;gap:15px;font-size:12px}
-.month-summary div span:first-child{color:var(--green)}
-.month-summary div span:last-child{color:var(--red)}
+.month-summary div{display:flex;flex-wrap:wrap;gap:8px 15px;font-size:12px}
+.month-summary .monthly-income,.month-summary .monthly-withdrawal{color:var(--green)}
+.month-summary .monthly-outgoing{color:var(--red)}
 .filter-bar{display:flex;gap:7px;overflow:auto;margin-bottom:15px;padding-bottom:2px}
 .filter{flex:none;border:1px solid var(--border);color:var(--muted);background:var(--surface);border-radius:99px;padding:8px 12px;font-size:12px}
 .filter.active{background:#294538;color:var(--green);border-color:#47795c}
@@ -118,3 +118,9 @@ h3{font-size:16px}
 .investment-detail{font-size:11px;color:var(--muted)}
 .investment-detail strong{display:block;font-size:12px;color:var(--text);margin-top:3px}
 .investment-summary .stat-card strong{overflow-wrap:anywhere}
+.investment_withdrawal .transaction-icon,.investment_withdrawal .transaction-value{color:var(--green)}
+.investment-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.investment-action-button{padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font-size:12px;font-weight:700}
+.investment-action-button.primary{border-color:#47795c;background:#294538;color:var(--green)}
+.investment-action-button.danger{color:var(--red)}
+.investment-operation-note{font-size:12px;color:var(--muted);line-height:1.45}

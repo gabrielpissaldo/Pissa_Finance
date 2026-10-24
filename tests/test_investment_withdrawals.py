@@ -76,7 +76,12 @@ class InvestmentWithdrawalTests(unittest.TestCase):
             self.assertEqual(investment["status"], "active")
             self.assertIsNone(investment["closed_at"])
             self.assertIsNone(movement["principal_amount"])
+            self.assertIsNone(movement["idempotency_key"])
             self.assertEqual(movement["amount"], 100)
+            idempotency_index = connection.execute(
+                "PRAGMA index_list(investment_movements)"
+            ).fetchall()
+            self.assertTrue(any(row["name"] == "idx_investment_movements_idempotency_key" for row in idempotency_index))
 
     def test_fixed_partial_withdrawal_keeps_cash_and_principal_separate(self):
         investment_id = self.create_fixed()
@@ -228,6 +233,131 @@ class InvestmentWithdrawalTests(unittest.TestCase):
         self.assertEqual(contribution.status_code, 409)
         self.assertEqual(self.withdraw(investment_id, principal_amount=1).status_code, 409)
         self.assertEqual(len(self.rows("investment_movements", investment_id)), 2)
+
+    def test_replayed_contribution_with_same_idempotency_key_is_applied_once(self):
+        investment_id = self.create_fixed()
+        headers = {"Idempotency-Key": "contribution-test-001"}
+        payload = {"amount": 50, "contribution_date": self.today}
+        first = self.client.post(
+            f"/api/investments/{investment_id}/contributions", json=payload, headers=headers
+        )
+        replay = self.client.post(
+            f"/api/investments/{investment_id}/contributions", json=payload, headers=headers
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json().get("idempotent_replay"))
+        self.assertEqual(self.investment(investment_id)["amount_invested"], 1050)
+        self.assertEqual(len(self.rows("investment_movements", investment_id)), 2)
+        self.assertEqual(len(self.rows("transactions", investment_id)), 2)
+
+    def test_replayed_total_withdrawal_with_same_key_succeeds_after_closure(self):
+        investment_id = self.create_fixed()
+        headers = {"Idempotency-Key": "withdrawal-test-001"}
+        payload = {
+            "amount": 1100,
+            "principal_amount": 1000,
+            "withdrawal_date": self.today
+        }
+        first = self.client.post(
+            f"/api/investments/{investment_id}/withdrawals", json=payload, headers=headers
+        )
+        replay = self.client.post(
+            f"/api/investments/{investment_id}/withdrawals", json=payload, headers=headers
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json().get("idempotent_replay"))
+        self.assertEqual(replay.json()["status"], "closed")
+        self.assertEqual(len(self.rows("investment_movements", investment_id)), 2)
+        self.assertEqual(len(self.rows("transactions", investment_id)), 2)
+
+    def test_replayed_market_withdrawal_does_not_reduce_position_twice(self):
+        investment_id = self.create_market()
+        headers = {"Idempotency-Key": "market-withdrawal-test-001"}
+        payload = {"amount": 350, "quantity": 3, "withdrawal_date": self.today}
+        first = self.client.post(
+            f"/api/investments/{investment_id}/withdrawals", json=payload, headers=headers
+        )
+        replay = self.client.post(
+            f"/api/investments/{investment_id}/withdrawals", json=payload, headers=headers
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json().get("idempotent_replay"))
+        position = self.investment(investment_id)
+        self.assertEqual((position["amount_invested"], position["details"]["quantity"],
+                          position["details"]["average_price"]), (700, 7, 100))
+        self.assertEqual(len(self.rows("investment_movements", investment_id)), 2)
+        self.assertEqual(len(self.rows("transactions", investment_id)), 2)
+
+    def test_reusing_withdrawal_key_with_type_inapplicable_field_conflicts(self):
+        market_id = self.create_market()
+        fixed_id = self.create_fixed()
+        market_headers = {"Idempotency-Key": "market-field-conflict-001"}
+        market_payload = {"amount": 100, "quantity": 1, "withdrawal_date": self.today}
+        fixed_headers = {"Idempotency-Key": "fixed-field-conflict-001"}
+        fixed_payload = {
+            "amount": 100, "principal_amount": 100, "withdrawal_date": self.today
+        }
+        self.assertEqual(self.client.post(
+            f"/api/investments/{market_id}/withdrawals", json=market_payload,
+            headers=market_headers
+        ).status_code, 200)
+        self.assertEqual(self.client.post(
+            f"/api/investments/{fixed_id}/withdrawals", json=fixed_payload,
+            headers=fixed_headers
+        ).status_code, 200)
+
+        market_replay = self.client.post(
+            f"/api/investments/{market_id}/withdrawals",
+            json={**market_payload, "principal_amount": 1}, headers=market_headers
+        )
+        fixed_replay = self.client.post(
+            f"/api/investments/{fixed_id}/withdrawals",
+            json={**fixed_payload, "quantity": 1}, headers=fixed_headers
+        )
+        self.assertEqual(market_replay.status_code, 409, market_replay.text)
+        self.assertEqual(fixed_replay.status_code, 409, fixed_replay.text)
+        self.assertEqual(len(self.rows("investment_movements", market_id)), 2)
+        self.assertEqual(len(self.rows("transactions", market_id)), 2)
+        self.assertEqual(len(self.rows("investment_movements", fixed_id)), 2)
+        self.assertEqual(len(self.rows("transactions", fixed_id)), 2)
+
+    def test_reusing_idempotency_key_with_different_payload_investment_or_operation_conflicts(self):
+        investment_id = self.create_fixed()
+        other_investment_id = self.create_fixed()
+        headers = {"Idempotency-Key": "conflict-test-001"}
+        first = self.client.post(
+            f"/api/investments/{investment_id}/contributions",
+            json={"amount": 50, "contribution_date": self.today},
+            headers=headers
+        )
+        conflict = self.client.post(
+            f"/api/investments/{investment_id}/contributions",
+            json={"amount": 60, "contribution_date": self.today},
+            headers=headers
+        )
+        other_investment_conflict = self.client.post(
+            f"/api/investments/{other_investment_id}/contributions",
+            json={"amount": 50, "contribution_date": self.today},
+            headers=headers
+        )
+        other_operation_conflict = self.client.post(
+            f"/api/investments/{investment_id}/withdrawals",
+            json={"amount": 50, "principal_amount": 50, "withdrawal_date": self.today},
+            headers=headers
+        )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(other_investment_conflict.status_code, 409, other_investment_conflict.text)
+        self.assertEqual(other_operation_conflict.status_code, 409, other_operation_conflict.text)
+        self.assertEqual(self.investment(investment_id)["amount_invested"], 1050)
+        self.assertEqual(len(self.rows("investment_movements", investment_id)), 2)
+        self.assertEqual(len(self.rows("transactions", investment_id)), 2)
+        self.assertEqual(self.investment(other_investment_id)["amount_invested"], 1000)
+        self.assertEqual(len(self.rows("investment_movements", other_investment_id)), 1)
+        self.assertEqual(len(self.rows("transactions", other_investment_id)), 1)
 
     def test_linked_transactions_cannot_be_updated_or_deleted_generically(self):
         investment_id = self.create_fixed()

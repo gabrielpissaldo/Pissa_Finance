@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -90,6 +90,73 @@ def _latest_movement_date(connection, investment_id: int, movement_type: str | N
         for row in connection.execute(query, parameters)
     ]
     return max(dates, default=None)
+
+
+def _normalize_idempotency_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    key = value.strip()
+    if not key or len(key) > 128:
+        raise HTTPException(status_code=400, detail="Idempotency-Key must contain 1 to 128 characters")
+    return key
+
+
+def _idempotent_replay(
+    connection,
+    *,
+    investment_id: int,
+    movement_type: str,
+    amount: float,
+    movement_date: str,
+    quantity: float | None,
+    principal_amount: float | None,
+    compare_principal: bool,
+    idempotency_key: str | None,
+    payload_fields_match: bool = True,
+):
+    if idempotency_key is None:
+        return None
+
+    existing = connection.execute("""
+        SELECT id, investment_id, movement_type, amount, principal_amount,
+               quantity, movement_date
+        FROM investment_movements
+        WHERE idempotency_key = ?
+    """, (idempotency_key,)).fetchone()
+    if existing is None:
+        return None
+
+    matches = (
+        existing["investment_id"] == investment_id
+        and existing["movement_type"] == movement_type
+        and existing["amount"] == amount
+        and existing["movement_date"] == movement_date
+        and existing["quantity"] == quantity
+        and (not compare_principal or existing["principal_amount"] == principal_amount)
+        and payload_fields_match
+    )
+    if not matches:
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency-Key was already used with a different operation payload"
+        )
+
+    investment = connection.execute("""
+        SELECT amount_invested, status FROM investments WHERE id = ?
+    """, (investment_id,)).fetchone()
+    if investment is None:
+        raise HTTPException(status_code=404, detail="Investment not found")
+
+    result = {
+        "message": "Operation already recorded",
+        "investment_id": investment_id,
+        "movement_id": existing["id"],
+        "amount_invested": investment["amount_invested"],
+        "idempotent_replay": True
+    }
+    if movement_type == "withdrawal":
+        result["status"] = investment["status"]
+    return result
     
 router = APIRouter(
     prefix="/api/investments",
@@ -231,16 +298,41 @@ def create_investment(investment: InvestmentCreate):
 
 
 @router.post("/{investment_id}/withdrawals")
-def create_withdrawal(investment_id: int, withdrawal: InvestmentWithdrawalCreate):
+def create_withdrawal(
+    investment_id: int,
+    withdrawal: InvestmentWithdrawalCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")
+):
     connection = get_connection()
     try:
         connection.execute("BEGIN IMMEDIATE")
+        idempotency_key = _normalize_idempotency_key(idempotency_key)
         investment = connection.execute("""
             SELECT id, name, investment_type, amount_invested, status
             FROM investments WHERE id = ?
         """, (investment_id,)).fetchone()
         if investment is None:
             raise HTTPException(status_code=404, detail="Investment not found")
+        is_market = investment["investment_type"] == "market_investment"
+        replay = _idempotent_replay(
+            connection,
+            investment_id=investment_id,
+            movement_type="withdrawal",
+            amount=withdrawal.amount,
+            movement_date=withdrawal.withdrawal_date,
+            quantity=withdrawal.quantity,
+            principal_amount=withdrawal.principal_amount,
+            compare_principal=not is_market,
+            payload_fields_match=(not is_market or withdrawal.principal_amount is None),
+            idempotency_key=idempotency_key
+        )
+        if replay is not None:
+            connection.commit()
+            return replay
+        if is_market and withdrawal.principal_amount is not None:
+            raise HTTPException(status_code=400, detail="Principal amount is calculated for market investments")
+        if not is_market and withdrawal.quantity is not None:
+            raise HTTPException(status_code=400, detail="Quantity is only valid for market investments")
         if investment["status"] != "active":
             raise HTTPException(status_code=409, detail="Investment is closed")
         withdrawal_date = _parse_movement_date(withdrawal.withdrawal_date)
@@ -252,8 +344,6 @@ def create_withdrawal(investment_id: int, withdrawal: InvestmentWithdrawalCreate
 
         current_principal = investment["amount_invested"]
         if investment["investment_type"] == "market_investment":
-            if withdrawal.principal_amount is not None:
-                raise HTTPException(status_code=400, detail="Principal amount is calculated for market investments")
             if (withdrawal.quantity is None or not isfinite(withdrawal.quantity)
                     or withdrawal.quantity <= 0):
                 raise HTTPException(status_code=400, detail="Quantity is required for market withdrawals")
@@ -294,8 +384,6 @@ def create_withdrawal(investment_id: int, withdrawal: InvestmentWithdrawalCreate
                 WHERE investment_id = ?
             """, (remaining_quantity, 0 if closed else average_price, investment_id))
         elif investment["investment_type"] == "fixed_income":
-            if withdrawal.quantity is not None:
-                raise HTTPException(status_code=400, detail="Quantity is only valid for market investments")
             principal = withdrawal.principal_amount
             if (principal is None or not isfinite(principal) or principal <= 0
                     or principal > current_principal):
@@ -327,10 +415,10 @@ def create_withdrawal(investment_id: int, withdrawal: InvestmentWithdrawalCreate
         movement_cursor = connection.execute("""
             INSERT INTO investment_movements
                 (investment_id, transaction_id, movement_type, amount,
-                 principal_amount, quantity, movement_date, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 principal_amount, quantity, idempotency_key, movement_date, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (investment_id, transaction_cursor.lastrowid, "withdrawal",
-              withdrawal.amount, principal, withdrawal.quantity,
+              withdrawal.amount, principal, withdrawal.quantity, idempotency_key,
               withdrawal.withdrawal_date, created_at))
         connection.commit()
         return {
@@ -350,12 +438,14 @@ def create_withdrawal(investment_id: int, withdrawal: InvestmentWithdrawalCreate
 @router.post("/{investment_id}/contributions")
 def create_contribution(
     investment_id: int,
-    contribution: InvestmentContributionCreate
+    contribution: InvestmentContributionCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")
 ):
     connection = get_connection()
 
     try:
         connection.execute("BEGIN IMMEDIATE")
+        idempotency_key = _normalize_idempotency_key(idempotency_key)
         investment = connection.execute("""
             SELECT
                 id,
@@ -372,6 +462,22 @@ def create_contribution(
                 status_code=404,
                 detail="Investment not found"
             )
+
+        replay = _idempotent_replay(
+            connection,
+            investment_id=investment_id,
+            movement_type="contribution",
+            amount=contribution.amount,
+            movement_date=contribution.contribution_date,
+            quantity=contribution.quantity,
+            principal_amount=None,
+            compare_principal=False,
+            idempotency_key=idempotency_key
+        )
+        if replay is not None:
+            connection.commit()
+            return replay
+
         if investment["status"] != "active":
             raise HTTPException(status_code=409, detail="Investment is closed")
 
@@ -481,16 +587,18 @@ def create_contribution(
                 transaction_id,
                 movement_type,
                 amount,
+                idempotency_key,
                 quantity,
                 movement_date,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             investment_id,
             transaction_id,
             "contribution",
             contribution.amount,
+            idempotency_key,
             contribution.quantity,
             contribution.contribution_date,
             created_at

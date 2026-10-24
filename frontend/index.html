@@ -32,8 +32,8 @@
 
       <section class="screen" id="transactions" aria-labelledby="transactions-title">
         <div class="page-heading"><div><p class="eyebrow">Setembro</p><h2 id="transactions-title">Movimentações</h2></div><button class="primary-button add-button" data-open-modal="transaction">+ Nova</button></div>
-        <article class="month-summary"><span>Saldo do mês</span><strong id="month-balance">R$ 0,00</strong><div><span id="month-income">+ R$ 0,00</span><span id="month-expense">− R$ 0,00</span></div></article>
-        <div class="filter-bar" role="group" aria-label="Filtrar movimentações"><button class="filter active" data-filter="all">Todas</button><button class="filter" data-filter="income">Entradas</button><button class="filter" data-filter="expense">Saídas</button><button class="filter" data-filter="investment">Investimentos</button></div>
+        <article class="month-summary"><span>Saldo do mês</span><strong id="month-balance">R$ 0,00</strong><div><span id="month-income" class="monthly-income">+ R$ 0,00</span><span id="month-expense" class="monthly-outgoing">− R$ 0,00</span><span id="month-withdrawals" class="monthly-withdrawal">+ R$ 0,00 resgates</span></div></article>
+        <div class="filter-bar" role="group" aria-label="Filtrar movimentações"><button class="filter active" data-filter="all">Todas</button><button class="filter" data-filter="income">Entradas</button><button class="filter" data-filter="expense">Saídas</button><button class="filter" data-filter="investment">Investimentos</button><button class="filter" data-filter="investment_withdrawal">Resgates</button></div>
         <div class="transaction-list full-list" id="transaction-list"></div>
       </section>
 

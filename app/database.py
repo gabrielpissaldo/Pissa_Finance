@@ -85,6 +85,7 @@ def init_db():
         amount REAL NOT NULL,
         principal_amount REAL,
         quantity REAL,
+        idempotency_key TEXT,
         movement_date TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (investment_id)
@@ -110,6 +111,16 @@ def init_db():
         connection.execute(
             "ALTER TABLE investment_movements ADD COLUMN principal_amount REAL"
         )
+    if "idempotency_key" not in movement_columns:
+        connection.execute(
+            "ALTER TABLE investment_movements ADD COLUMN idempotency_key TEXT"
+        )
+
+    connection.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_investment_movements_idempotency_key
+        ON investment_movements(idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+    """)
 
     connection.commit()
     connection.close()

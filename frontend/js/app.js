@@ -1,4 +1,44 @@
 (() => {
+  const pendingOperationStorageKey = 'pissa-finance-pending-investment-operation';
+
+  function readPendingInvestmentOperation() {
+    try {
+      const pending = JSON.parse(sessionStorage.getItem(pendingOperationStorageKey));
+      if (
+        !pending || !Number.isInteger(Number(pending.investmentId))
+        || !['contribution', 'withdrawal'].includes(pending.operation)
+        || typeof pending.key !== 'string' || !pending.key || pending.key.length > 128
+        || typeof pending.signature !== 'string' || !pending.payload || typeof pending.payload !== 'object'
+      ) return null;
+      return { ...pending, investmentId: Number(pending.investmentId), ambiguous: true };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function persistPendingInvestmentOperation(pending) {
+    try {
+      sessionStorage.setItem(pendingOperationStorageKey, JSON.stringify(pending));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function clearPendingInvestmentOperation() {
+    state.pendingInvestmentOperation = null;
+    try {
+      sessionStorage.removeItem(pendingOperationStorageKey);
+    } catch (_) {
+      // The in-memory state has still been cleared.
+    }
+  }
+
+  function createIdempotencyKey() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
+
   const state = {
     filter: 'all',
     modal: null,
@@ -8,6 +48,9 @@
     editingGoalId: null,
     investmentMode: 'create',
     editingInvestmentId: null,
+    investmentOperationId: null,
+    investmentOperationSubmitting: false,
+    pendingInvestmentOperation: readPendingInvestmentOperation(),
     transactions: [],
     goals: [],
     investments: []
@@ -72,15 +115,20 @@
       return state.goals;
    }
 
-  const transactionIcon = type => ({ income: '↓', expense: '↑', investment: '◇' }[type] || '•');
-  const transactionLabel = type => ({ income: 'Entrada', expense: 'Saída', investment: 'Investimento' }[type] || String(type || 'Movimentação'));
+  const transactionIcon = type => ({
+    income: '↓', expense: '↑', investment: '◇', investment_withdrawal: '↗'
+  }[type] || '•');
+  const transactionLabel = type => ({
+    income: 'Entrada', expense: 'Saída', investment: 'Investimento',
+    investment_withdrawal: 'Resgate de investimento'
+  }[type] || String(type || 'Movimentação'));
   function transactionMarkup(item, showActions = false) {
     const transactionId = escapeHtml(item.id);
     const description = escapeHtml(item.description);
     const safeType = escapeHtml(item.type);
     const category = escapeHtml(item.category || 'Sem categoria');
     const transactionDate = escapeHtml(item.transaction_date);
-    const sign = item.type === 'income' ? '+' : '-';
+    const sign = ['income', 'investment_withdrawal'].includes(item.type) ? '+' : '-';
     const actions = showActions && !item.investment_id ? `
       <div class="transaction-actions" aria-label="Ações de ${description}">
         <button class="transaction-action" type="button" data-edit-transaction="${transactionId}" aria-label="Editar ${description}" title="Editar">✎</button>
@@ -158,14 +206,21 @@
     const income = monthlyItems
       .filter(x => x.type === 'income')
       .reduce((sum, x) => sum + x.amount, 0);
-    
-    const outgoing = monthlyItems
-      .filter(x => x.type !== 'income')
+    const expenses = monthlyItems
+      .filter(x => x.type === 'expense')
       .reduce((sum, x) => sum + x.amount, 0);
-    
-    $('#month-balance').textContent = money(income - outgoing);
+    const invested = monthlyItems
+      .filter(x => x.type === 'investment')
+      .reduce((sum, x) => sum + x.amount, 0);
+    const withdrawn = monthlyItems
+      .filter(x => x.type === 'investment_withdrawal')
+      .reduce((sum, x) => sum + x.amount, 0);
+    const outgoing = expenses + invested;
+
+    $('#month-balance').textContent = money(income - expenses - invested + withdrawn);
     $('#month-income').textContent = '+ ' + money(income);
     $('#month-expense').textContent = '− ' + money(outgoing);
+    $('#month-withdrawals').textContent = '+ ' + money(withdrawn);
     
     const visible  = state.filter === 'all'
       ? items
@@ -228,6 +283,98 @@
     }
   }
 
+  async function apiErrorMessage(response, fallback) {
+    try {
+      const body = await response.json();
+      if (typeof body.detail === 'string') return body.detail;
+      if (Array.isArray(body.detail)) {
+        return body.detail.map(item => item.msg).filter(Boolean).join('; ') || fallback;
+      }
+    } catch (_) {
+      // Use the friendly fallback if the response is not JSON.
+    }
+    return fallback;
+  }
+
+  async function refreshInvestmentRelatedScreens() {
+    const results = await Promise.allSettled([
+      renderInvestments(), renderHome(), renderTransactions(), renderDashboard()
+    ]);
+    return results.some(result =>
+      result.status === 'rejected' || result.value === false
+    );
+  }
+
+  async function submitInvestmentOperation(investmentId, operation, payload, idempotencyKey) {
+    const endpoint = operation === 'contribution' ? 'contributions' : 'withdrawals';
+    const fallback = operation === 'contribution'
+      ? 'Não foi possível registrar o aporte.'
+      : 'Não foi possível registrar o resgate.';
+    try {
+      const response = await fetch(`/api/investments/${investmentId}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        return {
+          success: false,
+          ambiguous: response.status >= 500,
+          message: await apiErrorMessage(response, fallback)
+        };
+      }
+      try {
+        return { success: true, data: await response.json() };
+      } catch (_) {
+        return {
+          success: false,
+          ambiguous: true,
+          message: 'A resposta do servidor não pôde ser confirmada.'
+        };
+      }
+    } catch (_) {
+      return {
+        success: false,
+        ambiguous: true,
+        message: 'A conexão foi interrompida; não foi possível confirmar se a operação foi registrada.'
+      };
+    }
+  }
+
+  function confirmDeleteInvestment(investmentId) {
+    const investment = state.investments.find(item => item.id === Number(investmentId));
+    if (!investment) {
+      showNotification('Investimento não encontrado. Atualize a lista e tente novamente.', 'error');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Excluir o cadastro de "${investment.name}"? Isso remove o investimento e todas as movimentações e transactions vinculadas. Use apenas se foi cadastrado por engano; não é um resgate nem encerra a posição.`
+    );
+    if (confirmed) deleteInvestment(investment.id);
+  }
+
+  async function deleteInvestment(investmentId) {
+    try {
+      const response = await fetch(`/api/investments/${investmentId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        showNotification(await apiErrorMessage(response, 'Não foi possível excluir o cadastro.'), 'error');
+        return;
+      }
+      const refreshFailed = await refreshInvestmentRelatedScreens();
+      showNotification(
+        refreshFailed
+          ? 'Cadastro excluído, mas algumas telas não atualizaram. Recarregue a página.'
+          : 'Cadastro do investimento excluído.',
+        refreshFailed ? 'error' : 'success'
+      );
+    } catch (error) {
+      showNotification(error.message || 'Falha de conexão ao excluir o cadastro.', 'error');
+    }
+  }
+
   const investmentTypeLabels = {
     fixed_income: 'Renda fixa',
     market_investment: 'Mercado'
@@ -248,6 +395,10 @@
     const details = investment.details || {};
     const isFixedIncome = investment.investment_type === 'fixed_income';
     const status = investment.status === 'closed' ? 'closed' : 'active';
+    const investmentId = escapeHtml(investment.id);
+    const pending = state.pendingInvestmentOperation;
+    const hasPendingOperation = Boolean(pending);
+    const pendingMatchesInvestment = pending && pending.investmentId === investment.id;
     const extraDetails = isFixedIncome
       ? [
           investmentDetail('Taxa', rateTypeLabels[details.rate_type] || details.rate_type),
@@ -263,6 +414,21 @@
           details.quantity != null ? investmentDetail('Quantidade', Number(details.quantity).toLocaleString('pt-BR')) : '',
           details.average_price != null ? investmentDetail('Preço médio', money(Number(details.average_price))) : ''
         ].join('');
+    const actions = pendingMatchesInvestment
+      ? `<div class="investment-actions">
+          <button class="investment-action-button primary" type="button" data-investment-action="${escapeHtml(pending.operation)}" data-investment-id="${investmentId}">Confirmar operação pendente</button>
+        </div>`
+      : hasPendingOperation
+        ? '<div class="investment-operation-note">Resolva a operação pendente antes de iniciar outra.</div>'
+      : status === 'active'
+      ? `<div class="investment-actions">
+          <button class="investment-action-button primary" type="button" data-investment-action="contribution" data-investment-id="${investmentId}">Novo aporte</button>
+          <button class="investment-action-button" type="button" data-investment-action="withdrawal" data-investment-id="${investmentId}">Resgatar</button>
+          <button class="investment-action-button danger" type="button" data-delete-investment="${investmentId}">Excluir cadastro</button>
+        </div>`
+      : `<div class="investment-actions">
+          <button class="investment-action-button danger" type="button" data-delete-investment="${investmentId}">Excluir cadastro</button>
+        </div>`;
 
     return `<article class="investment-card ${status}">
       <div class="investment-card-header">
@@ -271,7 +437,9 @@
       </div>
       <strong class="investment-card-value">${money(Number(investment.amount_invested) || 0)}</strong>
       <div class="investment-card-meta"><span>Início</span><time datetime="${escapeHtml(investment.started_at)}">${escapeHtml(investment.started_at)}</time></div>
+      ${status === 'closed' && investment.closed_at ? investmentDetail('Encerrado em', investment.closed_at) : ''}
       ${extraDetails ? `<div class="investment-details">${extraDetails}</div>` : ''}
+      ${actions}
     </article>`;
   }
 
@@ -280,6 +448,12 @@
     list.innerHTML = '<p class="page-intro">Carregando investimentos…</p>';
     try {
       const investments = await loadInvestments();
+      if (state.pendingInvestmentOperation && !investments.some(
+        item => item.id === state.pendingInvestmentOperation.investmentId
+      )) {
+        clearPendingInvestmentOperation();
+        showNotification('A posição da operação pendente não existe mais; confirme o estado antes de registrar outra.', 'error');
+      }
       const total = investments.reduce((sum, item) => sum + (Number(item.amount_invested) || 0), 0);
       $('#investment-total').textContent = money(total);
       $('#investment-count').textContent = String(investments.length);
@@ -399,6 +573,64 @@
     </div>`;
     return `<div class="form-grid"><label class="field">Tipo<select name="type"><option value="income">Entrada</option><option value="expense">Saída</option></select></label><label class="field">Descrição<input name="description" required placeholder="Ex.: Mercado"></label><div class="form-row"><label class="field">Valor<input name="amount" required inputmode="decimal" placeholder="R$ 0,00"></label><label class="field">Categoria<input name="category" required placeholder="Ex.: Alimentação"></label></div><label class="field">Data<input name="date" type="date" value="2026-09-10"></label><label class="field">Observação<textarea name="note" placeholder="Opcional"></textarea></label><div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">Adicionar</button></div></div>`;
   }
+
+  function investmentOperationFormMarkup(investment, operation) {
+    const isMarket = investment.investment_type === 'market_investment';
+    const dateName = operation === 'contribution' ? 'contribution_date' : 'withdrawal_date';
+    const amountLabel = operation === 'contribution' ? 'Valor do aporte' : 'Valor recebido';
+    const amountFields = `<label class="field">${amountLabel}<input name="amount" type="number" required min="0.01" step="any" inputmode="decimal" placeholder="R$ 0,00"></label>`;
+    const positionFields = operation === 'contribution'
+      ? (isMarket ? '<label class="field">Quantidade adquirida<input name="quantity" type="number" required min="0.00000001" step="any" inputmode="decimal" placeholder="0,00"></label>' : '')
+      : (isMarket
+          ? '<label class="field">Quantidade vendida<input name="quantity" type="number" required min="0.00000001" step="any" inputmode="decimal" placeholder="0,00"></label>'
+          : '<div class="investment-operation-note">Informe o dinheiro recebido e, separadamente, o principal retirado da posição.</div><label class="field">Principal retirado<input name="principal_amount" type="number" required min="0.01" step="any" inputmode="decimal" placeholder="R$ 0,00"></label>');
+    const submit = operation === 'contribution' ? 'Registrar aporte' : 'Registrar resgate';
+
+    return `<div class="form-grid">
+      ${amountFields}
+      ${positionFields}
+      <label class="field">Data<input name="${dateName}" type="date" required></label>
+      <div class="form-actions"><button class="secondary-button" type="button" data-close-modal>Cancelar</button><button class="primary-button form-submit" type="submit">${submit}</button></div>
+    </div>`;
+  }
+
+  function openInvestmentOperation(investmentId, operation) {
+    if (state.investmentOperationSubmitting) {
+      showNotification('Aguarde a operação atual terminar.', 'error');
+      return;
+    }
+    const investment = state.investments.find(item => item.id === Number(investmentId));
+    if (!investment) {
+      showNotification('Investimento não encontrado. Atualize a lista e tente novamente.', 'error');
+      return;
+    }
+    const pending = state.pendingInvestmentOperation;
+    const isPendingRetry = pending
+      && pending.investmentId === investment.id
+      && pending.operation === operation;
+    if (pending && !isPendingRetry) {
+      showNotification('Confirme a operação pendente antes de iniciar outra.', 'error');
+      return;
+    }
+    if (investment.status !== 'active' && !isPendingRetry) {
+      showNotification('Esta posição está encerrada e não aceita novas operações.', 'error');
+      return;
+    }
+    state.modal = `investment_${operation}`;
+    state.investmentOperationId = investment.id;
+    $('#modal-title').textContent = operation === 'contribution' ? 'Novo aporte' : 'Resgatar investimento';
+    $('#entry-form').innerHTML = investmentOperationFormMarkup(investment, operation);
+    if (isPendingRetry) {
+      for (const [name, value] of Object.entries(pending.payload)) {
+        const field = $('#entry-form').elements[name];
+        if (field) field.value = value;
+      }
+      $('#entry-form [type="submit"]').textContent = 'Confirmar operação pendente';
+    }
+    $('#modal-backdrop').hidden = false;
+    setTimeout(() => $('#entry-form input')?.focus(), 50);
+  }
+
   function openModal(type, modalMode = 'create') {
     state.modal = type;
     if (type === 'transaction') {
@@ -569,6 +801,10 @@
   }
 
   function closeModal() {
+    if (state.investmentOperationSubmitting) {
+      showNotification('Aguarde a operação atual terminar antes de fechar.', 'error');
+      return;
+    }
     $('#modal-backdrop').hidden = true;
     state.modal = null;
     state.transactionMode = 'create';
@@ -577,6 +813,7 @@
     state.editingGoalId = null;
     state.investmentMode = 'create';
     state.editingInvestmentId = null;
+    state.investmentOperationId = null;
   }
   document.querySelector('[data-close-modal]').addEventListener('click', closeModal);
   function parseAmount(value) { return Number(String(value).replace(/[^0-9,.-]/g, '').replace('.', '').replace(',', '.')) || 0; }
@@ -621,6 +858,114 @@
         refreshFailed
           ? 'Investimento cadastrado, mas algumas telas não atualizaram. Recarregue a página.'
           : 'Investimento cadastrado com sucesso',
+        refreshFailed ? 'error' : 'success'
+      );
+      return;
+    }
+
+    if (state.modal === 'investment_contribution' || state.modal === 'investment_withdrawal') {
+      if (state.investmentOperationSubmitting) return;
+      const operation = state.modal === 'investment_contribution' ? 'contribution' : 'withdrawal';
+      const investment = state.investments.find(item => item.id === state.investmentOperationId);
+      if (!investment) {
+        showNotification('Investimento não encontrado. Atualize a lista e tente novamente.', 'error');
+        return;
+      }
+      const dateName = operation === 'contribution' ? 'contribution_date' : 'withdrawal_date';
+      const payload = {
+        amount: parseInvestmentNumber(form.get('amount')),
+        [dateName]: form.get(dateName)
+      };
+      if (investment.investment_type === 'market_investment') {
+        payload.quantity = parseInvestmentNumber(form.get('quantity'));
+      } else if (operation === 'withdrawal') {
+        payload.principal_amount = parseInvestmentNumber(form.get('principal_amount'));
+      }
+
+      const signature = JSON.stringify({ investmentId: investment.id, operation, payload });
+      let pending = state.pendingInvestmentOperation;
+      if (pending && (
+        pending.investmentId !== investment.id
+        || pending.operation !== operation
+        || pending.signature !== signature
+      )) {
+        showNotification(
+          'Há uma operação sem confirmação. Reenvie os mesmos dados antes de iniciar ou alterar outra.',
+          'error'
+        );
+        return;
+      }
+      if (!pending) {
+        pending = {
+          investmentId: investment.id,
+          operation,
+          payload,
+          signature,
+          key: createIdempotencyKey(),
+          ambiguous: true
+        };
+        state.pendingInvestmentOperation = pending;
+      }
+      if (!persistPendingInvestmentOperation(pending)) {
+        showNotification(
+          'A operação não foi enviada porque não foi possível guardar a chave e os dados para uma repetição segura. Habilite o armazenamento do navegador e tente novamente.',
+          'error'
+        );
+        return;
+      }
+
+      const operationForm = event.currentTarget;
+      const submitButton = operationForm.querySelector('[type="submit"]');
+      const originalSubmitLabel = submitButton.textContent;
+      state.investmentOperationSubmitting = true;
+      submitButton.disabled = true;
+      submitButton.textContent = 'Enviando…';
+      operationForm.setAttribute('aria-busy', 'true');
+      let result;
+      try {
+        result = await submitInvestmentOperation(investment.id, operation, payload, pending.key);
+      } finally {
+        state.investmentOperationSubmitting = false;
+        operationForm.removeAttribute('aria-busy');
+        submitButton.disabled = false;
+        submitButton.textContent = originalSubmitLabel;
+      }
+      if (!result.success) {
+        if (result.ambiguous) {
+          pending.ambiguous = true;
+          persistPendingInvestmentOperation(pending);
+          await renderInvestments();
+          showNotification(
+            `${result.message} Reenvie os mesmos dados para confirmar sem duplicar a operação; a mesma chave será reutilizada.`,
+            'error'
+          );
+        } else {
+          clearPendingInvestmentOperation();
+          await renderInvestments();
+          showNotification(result.message, 'error');
+        }
+        return;
+      }
+
+      clearPendingInvestmentOperation();
+      closeModal();
+      const refreshFailed = await refreshInvestmentRelatedScreens();
+      const operationResult = result.data;
+      const successMessage = operation === 'contribution'
+        ? operationResult.idempotent_replay
+          ? 'Aporte já registrado; posição atualizada.'
+          : 'Aporte registrado com sucesso.'
+        : operationResult.status === 'closed'
+          ? operationResult.idempotent_replay
+            ? 'Resgate total já registrado; posição encerrada.'
+            : 'Resgate total registrado; posição encerrada.'
+          : operationResult.idempotent_replay
+            ? 'Resgate já registrado; posição atualizada.'
+            : 'Resgate registrado com sucesso.';
+      showNotification(
+        refreshFailed
+          ? `${successMessage} Algumas telas não atualizaram; recarregue a página.`
+          : successMessage,
         refreshFailed ? 'error' : 'success'
       );
       return;
@@ -722,6 +1067,10 @@
     const nav = event.target.closest('[data-screen]'); if (nav) navigate(nav.dataset.screen);
     const link = event.target.closest('[data-navigate]'); if (link) navigate(link.dataset.navigate);
     const modal = event.target.closest('[data-open-modal]'); if (modal) openModal(modal.dataset.openModal);
+    const investmentAction = event.target.closest('[data-investment-action]');
+    if (investmentAction) openInvestmentOperation(investmentAction.dataset.investmentId, investmentAction.dataset.investmentAction);
+    const deleteInvestmentButton = event.target.closest('[data-delete-investment]');
+    if (deleteInvestmentButton) confirmDeleteInvestment(deleteInvestmentButton.dataset.deleteInvestment);
     const editTransaction = event.target.closest('[data-edit-transaction]'); if (editTransaction) openEditTransaction(editTransaction.dataset.editTransaction);
     const deleteTransaction = event.target.closest('[data-delete-transaction]'); if (deleteTransaction) confirmDeleteTransaction(deleteTransaction.dataset.deleteTransaction);
     const editGoal = event.target.closest('[data-edit-goal]'); if (editGoal) openEditGoal(editGoal.dataset.editGoal);
