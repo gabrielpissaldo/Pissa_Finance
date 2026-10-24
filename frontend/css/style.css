@@ -119,8 +119,5 @@ h3{font-size:16px}
 .investment-detail strong{display:block;font-size:12px;color:var(--text);margin-top:3px}
 .investment-summary .stat-card strong{overflow-wrap:anywhere}
 .investment_withdrawal .transaction-icon,.investment_withdrawal .transaction-value{color:var(--green)}
-.investment-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-.investment-action-button{padding:9px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font-size:12px;font-weight:700}
-.investment-action-button.primary{border-color:#47795c;background:#294538;color:var(--green)}
-.investment-action-button.danger{color:var(--red)}
+.investment-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:14px}
 .investment-operation-note{font-size:12px;color:var(--muted);line-height:1.45}

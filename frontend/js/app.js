@@ -396,6 +396,7 @@
     const isFixedIncome = investment.investment_type === 'fixed_income';
     const status = investment.status === 'closed' ? 'closed' : 'active';
     const investmentId = escapeHtml(investment.id);
+    const investmentName = escapeHtml(investment.name);
     const pending = state.pendingInvestmentOperation;
     const hasPendingOperation = Boolean(pending);
     const pendingMatchesInvestment = pending && pending.investmentId === investment.id;
@@ -416,23 +417,23 @@
         ].join('');
     const actions = pendingMatchesInvestment
       ? `<div class="investment-actions">
-          <button class="investment-action-button primary" type="button" data-investment-action="${escapeHtml(pending.operation)}" data-investment-id="${investmentId}">Confirmar operação pendente</button>
+          <button class="primary-button" type="button" data-investment-action="${escapeHtml(pending.operation)}" data-investment-id="${investmentId}">Confirmar operação pendente</button>
         </div>`
       : hasPendingOperation
         ? '<div class="investment-operation-note">Resolva a operação pendente antes de iniciar outra.</div>'
       : status === 'active'
       ? `<div class="investment-actions">
-          <button class="investment-action-button primary" type="button" data-investment-action="contribution" data-investment-id="${investmentId}">Novo aporte</button>
-          <button class="investment-action-button" type="button" data-investment-action="withdrawal" data-investment-id="${investmentId}">Resgatar</button>
-          <button class="investment-action-button danger" type="button" data-delete-investment="${investmentId}">Excluir cadastro</button>
+          <button class="primary-button" type="button" data-investment-action="contribution" data-investment-id="${investmentId}">Novo aporte</button>
+          <button class="text-button" type="button" data-investment-action="withdrawal" data-investment-id="${investmentId}">Resgatar</button>
+          <button class="goal-action danger" type="button" data-delete-investment="${investmentId}" aria-label="Excluir cadastro ${investmentName}" title="Excluir cadastro">×</button>
         </div>`
       : `<div class="investment-actions">
-          <button class="investment-action-button danger" type="button" data-delete-investment="${investmentId}">Excluir cadastro</button>
+          <button class="goal-action danger" type="button" data-delete-investment="${investmentId}" aria-label="Excluir cadastro ${investmentName}" title="Excluir cadastro">×</button>
         </div>`;
 
     return `<article class="investment-card ${status}">
       <div class="investment-card-header">
-        <div><strong>${escapeHtml(investment.name)}</strong><p class="investment-type">${escapeHtml(investmentTypeLabels[investment.investment_type] || investment.investment_type)}</p></div>
+        <div><strong>${investmentName}</strong><p class="investment-type">${escapeHtml(investmentTypeLabels[investment.investment_type] || investment.investment_type)}</p></div>
         <span class="investment-status ${status}">${status === 'closed' ? 'Encerrado' : 'Ativo'}</span>
       </div>
       <strong class="investment-card-value">${money(Number(investment.amount_invested) || 0)}</strong>
