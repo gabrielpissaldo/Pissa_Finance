@@ -391,6 +391,50 @@
     return `<span class="investment-detail">${escapeHtml(label)}<strong>${escapeHtml(value)}</strong></span>`;
   }
 
+  function formatReturnPercent(value) {
+    return `${Number(value).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}%`;
+  }
+
+  function valuationUnavailableText(status) {
+    return ({
+      pending_external_index: 'Índice ainda não integrado',
+      pending_quote: 'Aguardando cotação',
+      inconsistent_history: 'Histórico inconsistente',
+      unavailable: 'Valorização indisponível',
+      closed: 'Posição encerrada'
+    })[status] || 'Sem base de cálculo';
+  }
+
+  function investmentValuationDetails(investment) {
+    const unavailable = valuationUnavailableText(investment.valuation_status);
+    const currentValue = Number.isFinite(investment.current_value)
+      ? money(investment.current_value)
+      : unavailable;
+    const realized = Number.isFinite(investment.realized_profit_loss)
+      ? money(investment.realized_profit_loss)
+      : unavailable;
+    const unrealized = Number.isFinite(investment.unrealized_profit_loss)
+      ? money(investment.unrealized_profit_loss)
+      : unavailable;
+    const total = Number.isFinite(investment.total_profit_loss)
+      ? money(investment.total_profit_loss)
+      : unavailable;
+    const totalReturn = Number.isFinite(investment.total_return_percent)
+      ? formatReturnPercent(investment.total_return_percent)
+      : (investment.valuation_status === 'closed' ? '' : unavailable);
+
+    return [
+      investmentDetail('Valor atual estimado', currentValue),
+      investmentDetail('Rendimento realizado', realized),
+      investmentDetail('Rendimento não realizado', unrealized),
+      investmentDetail('Rendimento total', total),
+      investmentDetail('Rentabilidade total', totalReturn)
+    ].join('');
+  }
+
   function investmentMarkup(investment) {
     const details = investment.details || {};
     const isFixedIncome = investment.investment_type === 'fixed_income';
@@ -415,6 +459,7 @@
           details.quantity != null ? investmentDetail('Quantidade', Number(details.quantity).toLocaleString('pt-BR')) : '',
           details.average_price != null ? investmentDetail('Preço médio', money(Number(details.average_price))) : ''
         ].join('');
+    const valuationDetails = investmentValuationDetails(investment);
     const actions = pendingMatchesInvestment
       ? `<div class="investment-actions">
           <button class="primary-button" type="button" data-investment-action="${escapeHtml(pending.operation)}" data-investment-id="${investmentId}">Confirmar operação pendente</button>
@@ -436,10 +481,12 @@
         <div><strong>${investmentName}</strong><p class="investment-type">${escapeHtml(investmentTypeLabels[investment.investment_type] || investment.investment_type)}</p></div>
         <span class="investment-status ${status}">${status === 'closed' ? 'Encerrado' : 'Ativo'}</span>
       </div>
+      <p class="investment-type">Custo atual</p>
       <strong class="investment-card-value">${money(Number(investment.amount_invested) || 0)}</strong>
       <div class="investment-card-meta"><span>Início</span><time datetime="${escapeHtml(investment.started_at)}">${escapeHtml(investment.started_at)}</time></div>
       ${status === 'closed' && investment.closed_at ? investmentDetail('Encerrado em', investment.closed_at) : ''}
       ${extraDetails ? `<div class="investment-details">${extraDetails}</div>` : ''}
+      <div class="investment-details">${valuationDetails}</div>
       ${actions}
     </article>`;
   }

@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from math import isclose, isfinite
 
 from app.database import get_connection
+from app.investment_valuation import calculate_investment_valuation
 
 
 class InvestmentCreate(BaseModel):
@@ -970,6 +971,7 @@ def delete_contribution(
 @router.get("/")
 def list_investments():
     connection = get_connection()
+    as_of = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
     try:
         rows = connection.execute("""
@@ -1013,6 +1015,18 @@ def list_investments():
                 if details
                 else None
             )
+            movements = connection.execute("""
+                SELECT id, movement_type, amount, principal_amount, movement_date
+                FROM investment_movements
+                WHERE investment_id = ?
+                ORDER BY movement_date, id
+            """, (investment["id"],)).fetchall()
+            investment.update(calculate_investment_valuation(
+                investment,
+                investment["details"],
+                [dict(movement) for movement in movements],
+                as_of
+            ))
 
             result.append(investment)
 
